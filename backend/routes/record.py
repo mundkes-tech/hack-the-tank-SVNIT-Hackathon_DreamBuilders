@@ -2,10 +2,12 @@
 Record routes for handling video uploads and persistent storage.
 PHASE 3A: Video Upload & Persistent Storage
 PHASE 3B: Whisper Transcription
+PHASE 3C: AI Highlight Extraction
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import List, Dict, Any
 import json
 import os
 import subprocess
@@ -14,6 +16,7 @@ from pathlib import Path
 
 from database import get_db
 from models import Campaign
+from services.highlight_extractor import extract_highlights
 
 
 # Load Whisper model once at module level (not per-request)
@@ -33,6 +36,12 @@ class VideoUploadResponse(BaseModel):
     message: str
     transcript: str  # PHASE 3B: Whisper transcription result
     segment_count: int
+
+
+class HighlightExtractionResponse(BaseModel):
+    message: str
+    highlight_count: int
+    highlights: List[Dict[str, Any]]
 
 
 # Configuration
@@ -322,3 +331,100 @@ async def upload_video(
         transcript=transcript,
         segment_count=len(segments)
     )
+
+
+@router.post("/highlights/{campaign_id}", response_model=HighlightExtractionResponse)
+def generate_highlights(
+    campaign_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate AI-powered highlight extraction for a campaign's transcript.
+    
+    PHASE 3C: Uses Gemini to analyze transcript and segments,
+    extracting 3-5 most impactful testimonial moments.
+    
+    Args:
+        campaign_id: Unique campaign identifier
+        db: Database session (dependency injection)
+    
+    Returns:
+        HighlightExtractionResponse with highlights list
+    
+    Raises:
+        404: If campaign not found
+        400: If transcript or segments not available
+        500: If highlight extraction fails
+    """
+    
+    # Validate campaign exists
+    campaign = get_campaign_or_404(campaign_id, db)
+    
+    # Ensure transcript exists
+    if not campaign.transcript:
+        raise HTTPException(
+            status_code=400,
+            detail="No transcript available. Please upload and transcribe video first."
+        )
+    
+    # Ensure segments exist
+    if not campaign.segments:
+        raise HTTPException(
+            status_code=400,
+            detail="No segments available. Please upload and transcribe video first."
+        )
+    
+    # Check if highlights already exist (avoid reprocessing)
+    if campaign.highlights:
+        print(f"[HIGHLIGHT] Highlights already exist for campaign: {campaign_id}")
+        existing_highlights = json.loads(campaign.highlights)
+        return HighlightExtractionResponse(
+            message="Highlights already generated",
+            highlight_count=len(existing_highlights.get("highlights", [])),
+            highlights=existing_highlights.get("highlights", [])
+        )
+    
+    # Deserialize segments
+    try:
+        segments = json.loads(campaign.segments)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse segments JSON: {str(e)}"
+        )
+    
+    # Extract highlights using Gemini AI
+    try:
+        print(f"[HIGHLIGHT] Extracting highlights for campaign: {campaign_id}")
+        result = extract_highlights(campaign.transcript, segments)
+        
+        highlights = result.get("highlights", [])
+        
+        if not highlights:
+            raise HTTPException(
+                status_code=500,
+                detail="No highlights were extracted"
+            )
+        
+        # Save highlights to database
+        highlights_json = json.dumps(result)
+        campaign.highlights = highlights_json
+        db.commit()
+        db.refresh(campaign)
+        print(f"[DATABASE] Highlights saved for campaign: {campaign_id}")
+        
+        return HighlightExtractionResponse(
+            message="Highlights generated successfully",
+            highlight_count=len(highlights),
+            highlights=highlights
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[HIGHLIGHT] Error: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Highlight extraction failed: {str(e)}"
+        )
