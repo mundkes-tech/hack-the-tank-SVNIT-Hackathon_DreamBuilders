@@ -1,0 +1,153 @@
+/* Avatar Component Styling */
+
+.avatar-container {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 2rem;
+}
+
+/* Main avatar circle */
+.avatar-circle {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+  position: relative;
+  z-index: 10;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+/* Avatar content (emoji) */
+.avatar-content {
+  font-size: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-emoji {
+  display: inline-block;
+  animation: idle-float 3s ease-in-out infinite;
+}
+
+/* Idle floating animation */
+@keyframes idle-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Speaking state - scale slightly larger */
+.avatar-container.speaking .avatar-circle {
+  transform: scale(1.08);
+  box-shadow: 0 12px 48px rgba(102, 126, 234, 0.5);
+}
+
+/* Avatar glow - appears when speaking */
+.avatar-glow {
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(102, 126, 234, 0.4) 0%,
+    rgba(102, 126, 234, 0.1) 100%
+  );
+  animation: glow-pulse 1.5s ease-in-out infinite;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+}
+
+/* Pulse rings - outer ripple waves when speaking */
+.pulse-ring {
+  position: absolute;
+  border: 2px solid rgba(102, 126, 234, 0.6);
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+}
+
+.pulse-ring-1 {
+  width: 180px;
+  height: 180px;
+  animation: pulse-out 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.pulse-ring-2 {
+  width: 200px;
+  height: 200px;
+  animation: pulse-out 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite 0.5s;
+}
+
+@keyframes pulse-out {
+  0% {
+    width: 140px;
+    height: 140px;
+    opacity: 1;
+  }
+  100% {
+    width: 220px;
+    height: 220px;
+    opacity: 0;
+  }
+}
+
+/* Responsive - smaller on mobile */
+@media (max-width: 768px) {
+  .avatar-container {
+    width: 160px;
+    height: 160px;
+    margin: 0 auto 1.5rem;
+  }
+
+  .avatar-circle {
+    width: 120px;
+    height: 120px;
+  }
+
+  .avatar-content {
+    font-size: 48px;
+  }
+
+  .avatar-glow {
+    width: 140px;
+    height: 140px;
+  }
+
+  .pulse-ring-1 {
+    width: 160px;
+    height: 160px;
+  }
+
+  .pulse-ring-2 {
+    width: 180px;
+    height: 180px;
+  }
+}
