@@ -9,6 +9,7 @@ import uuid
 
 from database import get_db
 from models import Campaign
+from services.ai_questions import generate_testimonial_questions
 
 
 router = APIRouter(prefix="/campaign", tags=["Campaign"])
@@ -30,6 +31,15 @@ class GetCampaignResponse(BaseModel):
     campaign_id: str
     prompt: str
     created_at: str
+
+
+class GenerateQuestionsRequest(BaseModel):
+    language: str = "english"
+
+
+class GenerateQuestionsResponse(BaseModel):
+    campaign_id: str
+    questions: list[str]
 
 
 @router.post("/create", response_model=CreateCampaignResponse)
@@ -92,4 +102,38 @@ def get_campaign(
         campaign_id=campaign.id,
         prompt=campaign.prompt,
         created_at=campaign.created_at.isoformat()
+    )
+
+
+@router.post("/{campaign_id}/generate-questions", response_model=GenerateQuestionsResponse)
+def generate_questions(
+    campaign_id: str,
+    request: GenerateQuestionsRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate testimonial interview questions for a campaign using Gemini AI.
+    
+    - Fetches campaign from database
+    - Calls AI service to generate 4 questions
+    - Returns questions in requested language
+    """
+    # Fetch campaign from database
+    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    
+    # Check if campaign exists
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    
+    # Validate language parameter
+    language = request.language.lower() if request.language else "english"
+    if language not in ["english", "hindi"]:
+        raise HTTPException(status_code=400, detail="Language must be 'english' or 'hindi'")
+    
+    # Generate questions using AI service
+    result = generate_testimonial_questions(campaign.prompt, language)
+    
+    return GenerateQuestionsResponse(
+        campaign_id=campaign_id,
+        questions=result.get("questions", [])
     )

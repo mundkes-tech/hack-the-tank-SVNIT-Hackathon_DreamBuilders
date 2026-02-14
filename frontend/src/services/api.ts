@@ -22,6 +22,15 @@ export interface CreateCampaignResponse {
   created_at: string;
 }
 
+export interface GenerateQuestionsRequest {
+  language: string;
+}
+
+export interface GenerateQuestionsResponse {
+  campaign_id: string;
+  questions: string[];
+}
+
 /**
  * Create a new testimonial campaign
  */
@@ -57,6 +66,31 @@ export async function getCampaign(campaignId: string): Promise<Campaign> {
       throw new Error('Campaign not found');
     }
     throw new Error(`Failed to fetch campaign: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Generate testimonial interview questions for a campaign
+ */
+export async function generateQuestions(
+  campaignId: string,
+  language: string = 'english'
+): Promise<GenerateQuestionsResponse> {
+  const response = await fetch(`${API_BASE_URL}/campaign/${campaignId}/generate-questions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ language }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Campaign not found');
+    }
+    throw new Error(`Failed to generate questions: ${response.statusText}`);
   }
 
   return response.json();
