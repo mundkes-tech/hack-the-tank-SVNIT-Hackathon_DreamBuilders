@@ -6,8 +6,10 @@ PHASE 3B: Whisper Transcription
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from database import get_db
@@ -15,21 +17,12 @@ from models import Campaign
 
 
 # Load Whisper model once at module level (not per-request)
-# Using "tiny" model for speed - perfect for demos/hackathon
+# Using "base" model for better accuracy with reasonable speed
 # Models: tiny (39MB), base (74MB), small (244MB), medium (769MB), large (1550MB)
-print("[WHISPER] Delaying Whisper model loading until first use...")
 import whisper
-WHISPER_MODEL = None  # Will be loaded on first transcription request
-
-
-def load_whisper_model():
-    """Lazy load Whisper model on first use"""
-    global WHISPER_MODEL
-    if WHISPER_MODEL is None:
-        print("[WHISPER] Loading Whisper model (tiny)...")
-        WHISPER_MODEL = whisper.load_model("tiny")
-        print("[WHISPER] Whisper model loaded successfully!")
-    return WHISPER_MODEL
+print("[WHISPER] Loading Whisper model (base) on CPU...")
+WHISPER_MODEL = whisper.load_model("base", device="cpu")
+print("[WHISPER] Whisper model loaded successfully!")
 
 
 router = APIRouter(prefix="/record", tags=["Record"])
@@ -38,8 +31,8 @@ router = APIRouter(prefix="/record", tags=["Record"])
 # Response Models
 class VideoUploadResponse(BaseModel):
     message: str
-    video_path: str
     transcript: str  # PHASE 3B: Whisper transcription result
+    segment_count: int
 
 
 # Configuration
@@ -157,7 +150,7 @@ def extract_audio_from_video(video_path: Path, audio_path: Path) -> None:
         )
 
 
-def transcribe_audio_with_whisper(audio_path: Path) -> str:
+def transcribe_audio_with_whisper(audio_path: Path) -> tuple[str, list]:
     """
     Transcribe audio file using Whisper AI.
     
@@ -174,19 +167,18 @@ def transcribe_audio_with_whisper(audio_path: Path) -> str:
     """
     try:
         print(f"[WHISPER] Transcribing: {audio_path}")
+        start_time = time.time()
         
-        # Load model if not already loaded
-        model = load_whisper_model()
+        result = WHISPER_MODEL.transcribe(str(audio_path), fp16=False)
         
-        # Transcribe using model
-        result = model.transcribe(str(audio_path))
+        transcript = result.get("text", "").strip()
+        segments = result.get("segments", [])
         
-        # Extract text from result
-        transcript = result["text"].strip()
-        
+        duration = time.time() - start_time
         print(f"[WHISPER] Transcription complete: {len(transcript)} characters")
+        print(f"[WHISPER] Transcription time: {duration:.2f}s")
         
-        return transcript
+        return transcript, segments
         
     except Exception as e:
         print(f"[WHISPER] Transcription error: {str(e)}")
@@ -289,12 +281,22 @@ async def upload_video(
     
     extract_audio_from_video(video_path, audio_path)
     
+    # Avoid reprocessing if transcript and segments already exist
+    if campaign.transcript and campaign.segments:
+        return VideoUploadResponse(
+            message="Video uploaded and transcribed successfully",
+            transcript=campaign.transcript,
+            segment_count=len(json.loads(campaign.segments))
+        )
+
     # Step B: Transcribe audio using Whisper
-    transcript = transcribe_audio_with_whisper(audio_path)
+    transcript, segments = transcribe_audio_with_whisper(audio_path)
+    segments_json = json.dumps(segments)
     
     # Step C: Save transcript to database
     try:
         campaign.transcript = transcript
+        campaign.segments = segments_json
         db.commit()
         db.refresh(campaign)
         print(f"[DATABASE] Transcript saved for campaign: {campaign_id}")
@@ -317,6 +319,6 @@ async def upload_video(
     # Return success response with transcript
     return VideoUploadResponse(
         message="Video uploaded and transcribed successfully",
-        video_path=f"uploads/{video_filename}",
-        transcript=transcript
+        transcript=transcript,
+        segment_count=len(segments)
     )

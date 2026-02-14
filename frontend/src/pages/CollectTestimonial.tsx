@@ -238,7 +238,7 @@ export default function CollectTestimonial() {
       // PHASE 3B: Display transcript to user
       alert(
         `✅ Testimonial recorded and transcribed!\n\n` +
-        `Video: ${result.video_path}\n\n` +
+        `Segments: ${result.segment_count}\n\n` +
         `Transcript:\n${result.transcript.substring(0, 200)}${result.transcript.length > 200 ? '...' : ''}`
       );
       
