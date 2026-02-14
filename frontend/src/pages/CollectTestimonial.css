@@ -441,6 +441,22 @@
   background: #059669;
 }
 
+.btn-danger {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 0.875rem 2rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
 /* Loading States */
 .spinner-large {
   width: 80px;
