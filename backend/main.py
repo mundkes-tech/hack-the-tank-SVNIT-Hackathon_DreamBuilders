@@ -1,12 +1,14 @@
 """
 Main FastAPI application for AI-Native Autonomous Testimonial Collection System.
 Phase 1: Campaign + Link System
+Phase 3A: Video Upload & Persistent Storage
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routes.campaign import router as campaign_router
+from routes.record import router as record_router
 
 
 @asynccontextmanager
@@ -43,6 +45,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(campaign_router)
+app.include_router(record_router)
 
 
 @app.get("/")

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { getCampaign, generateQuestions } from '../services/api';
 import Avatar from '../components/Avatar';
@@ -35,11 +35,17 @@ export default function CollectTestimonial() {
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [silenceStartTime, setSilenceStartTime] = useState<number | null>(null);
-  const [animationFrameId, setAnimationFrameId] = useState<number | null>(null);
-  // Store recorded video for Phase 3 (whisper transcription)
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  
+  // Refs for immediate access (not subject to state closure issues)
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  
+  // Refs for silence detection
+  const silenceDetectionRef = useRef({
+    animationFrameId: null as number | null,
+    silenceStartTime: null as number | null,
+    isActive: false,
+  });
 
   // Fetch campaign on mount
   useEffect(() => {
@@ -100,9 +106,11 @@ export default function CollectTestimonial() {
   };
 
   /**
+   * B. SILENCE DETECTION FLOW:
    * Speak the current question using Web Speech API
-   * Always cancels previous speech before starting new one
-   * After speech ends, start silence detection
+   * - Cancel any ongoing speech first
+   * - Track speaking state to prevent silence detection during TTS
+   * - Start silence detection ONLY after TTS finishes (utterance.onend)
    */
   const speakCurrentQuestion = () => {
     if (questions.length === 0 || currentQuestionIndex >= questions.length) {
@@ -110,9 +118,11 @@ export default function CollectTestimonial() {
     }
 
     const currentQuestion = questions[currentQuestionIndex];
+    console.log(`[TTS] Speaking question ${currentQuestionIndex + 1}: "${currentQuestion.substring(0, 50)}..."`);
     
     // Cancel any ongoing speech
     window.speechSynthesis.cancel();
+    stopSilenceDetection(); // Stop silence detection while we speak
 
     // Create speech utterance
     const utterance = new SpeechSynthesisUtterance(currentQuestion);
@@ -123,21 +133,21 @@ export default function CollectTestimonial() {
 
     // Track speaking state
     utterance.onstart = () => {
+      console.log('[TTS] Speech playing');
       setIsSpeaking(true);
-      // Stop silence detection while AI is speaking
-      stopSilenceDetection();
     };
 
     utterance.onend = () => {
+      console.log('[TTS] Speech ended, starting silence detection');
       setIsSpeaking(false);
-      // Start silence detection after AI finishes speaking
+      // Start silence detection AFTER AI finishes speaking
       startSilenceDetection();
     };
 
     utterance.onerror = (event) => {
-      console.error('Speech synthesis error:', event.error);
+      console.error('[TTS] Speech synthesis error:', event.error);
       setIsSpeaking(false);
-      // Even on error, start silence detection
+      // Even on error, start silence detection to keep interview flowing
       startSilenceDetection();
     };
 
@@ -194,171 +204,330 @@ export default function CollectTestimonial() {
   }, [isInterviewStarted]);
 
   /**
+   * PHASE 3A: Upload video blob to backend for permanent storage
+   * PHASE 3B: Receive Whisper transcription in response
+   * - Sends videoBlob to POST /record/upload/{campaign_id}
+   * - Multipart/form-data with file field: "video"
+   * - Backend transcribes audio and returns transcript
+   * - Handles success and error responses
+   */
+  const uploadVideo = async (blob: Blob, campaignId: string) => {
+    try {
+      console.log('[UPLOAD] Starting video upload...');
+      
+      // Create FormData for multipart/form-data request
+      const formData = new FormData();
+      formData.append('video', blob, 'response.webm');
+      
+      // Send POST request to backend
+      const response = await fetch(`http://127.0.0.1:8001/record/upload/${campaignId}`, {
+        method: 'POST',
+        body: formData,
+        // DO NOT set Content-Type header - browser will set it with boundary
+      });
+      
+      // Handle response
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Upload failed: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('[UPLOAD] Video uploaded and transcribed successfully:', result);
+      
+      // PHASE 3B: Display transcript to user
+      alert(
+        `✅ Testimonial recorded and transcribed!\n\n` +
+        `Video: ${result.video_path}\n\n` +
+        `Transcript:\n${result.transcript.substring(0, 200)}${result.transcript.length > 200 ? '...' : ''}`
+      );
+      
+      return result;
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[UPLOAD] Video upload failed:', errorMsg);
+      alert(`❌ Failed to save video: ${errorMsg}`);
+    }
+  };
+
+  /**
    * Process recorded video blob when available
-   * In Phase 3, this blob will be sent to Whisper for transcription
+   * PHASE 3A: Upload to backend for permanent storage
+   * PHASE 3B: Backend transcribes and returns text
    */
   useEffect(() => {
-    if (videoBlob) {
-      // Log for debugging
-      console.log('Video recording saved:', {
+    if (videoBlob && campaignId) {
+      // Log and upload
+      console.log('[UPLOAD] Video blob ready:', {
         size: videoBlob.size,
         type: videoBlob.type,
         timestamp: new Date().toISOString(),
       });
-      // TODO: Phase 3 - Send videoBlob to backend for whisper transcription
+      
+      // Upload to backend (includes transcription)
+      uploadVideo(videoBlob, campaignId);
     }
-  }, [videoBlob]);
+  }, [videoBlob, campaignId]);
 
   /**
    * Start video + audio recording using MediaRecorder API
+   * A. MEDIA PERMISSION:
+   * - Requests camera and microphone with { video: true, audio: true }
+   * - Verifies audio track exists
+   * - Sets up Web Audio API for frequency analysis
    */
   const startRecording = async () => {
     try {
+      console.log('[RECORDING] Starting recording...');
+      
       // Request camera and microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
+      // Verify audio track exists
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        console.error('[RECORDING] ERROR: No audio tracks found in stream');
+        throw new Error('Microphone stream has no audio track');
+      }
+      console.log(`[RECORDING] Audio track found. Sample rate: ${audioTracks[0].getSettings().sampleRate}Hz`);
+
       setMediaStream(stream);
 
-      // Create MediaRecorder
+      // Create MediaRecorder for video + audio
       const recorder = new MediaRecorder(stream, {
         mimeType: 'video/webm;codecs=vp8,opus',
       });
 
       const chunks: Blob[] = [];
+      let totalDataSize = 0;
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunks.push(event.data);
+          totalDataSize += event.data.size;
+          console.log(`[RECORDING] Data chunk received: ${event.data.size} bytes | Total: ${totalDataSize} bytes`);
         }
       };
 
       recorder.onstop = () => {
+        console.log('[RECORDING] MediaRecorder stopped, creating blob...');
         const blob = new Blob(chunks, { type: 'video/webm' });
-        setVideoBlob(blob); // Store for Phase 3 (whisper transcription)
+        setVideoBlob(blob);
+        console.log(`[RECORDING] Video blob created: ${blob.size} bytes`);
+      };
+
+      recorder.onerror = (event) => {
+        console.error('[RECORDING] MediaRecorder error:', event.error);
       };
 
       setMediaRecorder(recorder);
       recorder.start();
       setIsRecording(true);
+      console.log('[RECORDING] MediaRecorder started');
 
-      // Create Web Audio API context for silence detection
+      // C. AUDIO ANALYSER SETUP:
+      // - Create Web Audio API context
+      // - Set up analyser with fftSize 2048
+      // - Connect microphone stream to analyser
       const audioCtx = new (window.AudioContext ||
         (window as any).webkitAudioContext)();
+      console.log(`[RECORDING] AudioContext created. Sample rate: ${audioCtx.sampleRate}Hz`);
+      
       setAudioContext(audioCtx);
 
-      // Create analyser node
       const analyserNode = audioCtx.createAnalyser();
       analyserNode.fftSize = 2048;
+      console.log('[RECORDING] Analyser node created with fftSize 2048');
 
       // Connect microphone to analyser
       const source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyserNode);
+      console.log('[RECORDING] Microphone stream connected to analyser');
 
-      setAnalyser(analyserNode);
+      // Store in ref for immediate access (avoids closure issues with state)
+      analyserRef.current = analyserNode;
     } catch (err) {
-      console.error('Failed to start recording:', err);
-      alert('Camera/microphone access denied. Cannot record.');
+      console.error('[RECORDING] Failed to start recording:', err);
+      alert('Camera/microphone access denied. Please allow access to continue.');
+      // Allow interview to continue without recording
+      setIsRecording(false);
     }
   };
 
   /**
    * Stop video + audio recording
+   * - Stops MediaRecorder
+   * - Closes all media streams
+   * - Closes AudioContext
+   * - Stops silence detection
    */
   const stopRecording = () => {
+    console.log('[RECORDING] Stopping recording...');
+    
+    // Stop silence detection first
+    stopSilenceDetection();
+
+    // Stop MediaRecorder
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
-      setIsRecording(false);
+      console.log('[RECORDING] MediaRecorder stopped');
     }
 
+    // Stop all tracks in media stream
     if (mediaStream) {
-      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream.getTracks().forEach((track) => {
+        track.stop();
+        console.log(`[RECORDING] Track stopped: ${track.kind}`);
+      });
       setMediaStream(null);
     }
 
-    if (audioContext) {
+    // Close audio context
+    if (audioContext && audioContext.state !== 'closed') {
       audioContext.close();
-      setAudioContext(null);
+      console.log('[RECORDING] AudioContext closed');
     }
+    setAudioContext(null);
+    analyserRef.current = null;
+    setIsRecording(false);
 
-    // Stop silence detection
-    stopSilenceDetection();
+    console.log('[RECORDING] Recording stopped completely');
   };
 
   /**
-   * Start monitoring microphone for silence
-   * Only call after AI stops speaking (utterance.onend)
-   * Silence threshold: average amplitude < 12
-   * Silence duration: 2000ms
+   * D. SILENCE LOGIC:
+   * - Start monitoring microphone for silence ONLY after TTS finishes
+   * - SILENCE_THRESHOLD = 12 (frequency average)
+   * - SILENCE_DURATION = 2000ms
+   * - Reset silence counter when user speaks
+   * - Auto-advance to next question or finish
    */
   const startSilenceDetection = () => {
-    if (!analyser) return;
+    // Don't start if analyser not ready or already listening
+    // Use analyserRef.current for immediate access (not state)
+    if (!analyserRef.current || silenceDetectionRef.current.isActive) {
+      console.log('[SILENCE] Cannot start - analyser:', !!analyserRef.current, 'already active:', silenceDetectionRef.current.isActive);
+      return;
+    }
 
-    setSilenceStartTime(null);
+    console.log('[SILENCE] Starting silence detection...');
+    silenceDetectionRef.current.isActive = true;
+    silenceDetectionRef.current.silenceStartTime = null;
 
-    const SILENCE_THRESHOLD = 12;
+    const SILENCE_THRESHOLD = 18; // Frequency bin magnitude threshold (detects actual speech)
     const SILENCE_DURATION = 2000; // 2 seconds
+    let consecutiveFrames = 0;
+    const requiredFrames = Math.ceil(SILENCE_DURATION / 16.67); // ~120 frames at 60fps
 
     const detectSilence = () => {
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(dataArray);
+      // Read frequency data from analyser using ref (not state)
+      if (!analyserRef.current) {
+        console.log('[SILENCE] Analyser lost, stopping detection');
+        stopSilenceDetection();
+        return;
+      }
 
-      // Calculate average frequency
+      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(dataArray);
+
+      // Calculate average frequency magnitude
       const average =
         dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
 
+      // Debug logging (every 30 frames = ~500ms)
+      if (consecutiveFrames % 30 === 0) {
+        console.log(`[SILENCE] Avg freq: ${average.toFixed(2)}, threshold: ${SILENCE_THRESHOLD}, frames: ${consecutiveFrames}/${requiredFrames}`);
+      }
+
       if (average < SILENCE_THRESHOLD) {
-        // User is silent
-        if (silenceStartTime === null) {
-          setSilenceStartTime(Date.now());
-        } else if (Date.now() - silenceStartTime >= SILENCE_DURATION) {
-          // 2 seconds of silence detected, move to next question
+        // User is silent - increment frame counter
+        consecutiveFrames++;
+
+        if (consecutiveFrames >= requiredFrames) {
+          // 2 seconds of silence detected!
+          console.log('[SILENCE] 2 seconds of silence detected! Moving to next question.');
           stopSilenceDetection();
           moveToNextQuestion();
           return;
         }
       } else {
-        // User is speaking, reset silence counter
-        setSilenceStartTime(null);
+        // User is speaking - reset counter
+        if (consecutiveFrames > 0) {
+          console.log(`[SILENCE] Speech detected, resetting counter (was ${consecutiveFrames})`);
+        }
+        consecutiveFrames = 0;
       }
 
       // Continue monitoring
-      const frameId = requestAnimationFrame(detectSilence);
-      setAnimationFrameId(frameId);
+      if (silenceDetectionRef.current.isActive) {
+        const frameId = requestAnimationFrame(detectSilence);
+        silenceDetectionRef.current.animationFrameId = frameId;
+      }
     };
 
+    // Start the detection loop
     const frameId = requestAnimationFrame(detectSilence);
-    setAnimationFrameId(frameId);
+    silenceDetectionRef.current.animationFrameId = frameId;
+    console.log('[SILENCE] Detection loop started');
   };
 
   /**
-   * Stop silence detection and cancel animation frame
+   * Stop silence detection and cleanup
+   * - Cancels animationFrame loop
+   * - Cleans up refs
+   * - Prevents memory leaks
    */
   const stopSilenceDetection = () => {
-    setSilenceStartTime(null);
-
-    if (animationFrameId !== null) {
-      cancelAnimationFrame(animationFrameId);
-      setAnimationFrameId(null);
+    if (!silenceDetectionRef.current.isActive) {
+      return;
     }
+
+    console.log('[SILENCE] Stopping silence detection...');
+    silenceDetectionRef.current.isActive = false;
+    silenceDetectionRef.current.silenceStartTime = null;
+
+    if (silenceDetectionRef.current.animationFrameId !== null) {
+      cancelAnimationFrame(silenceDetectionRef.current.animationFrameId);
+      silenceDetectionRef.current.animationFrameId = null;
+      console.log('[SILENCE] Animation frame cancelled');
+    }
+
+    console.log('[SILENCE] Detection stopped');
   };
 
   /**
-   * Move to next question or finish if on last question
+   * E. QUESTION PROGRESSION:
+   * - Move to next question if not last
+   * - Stop recording if last question + finish
+   * - Ensure no duplicate calls
    */
   const moveToNextQuestion = () => {
     const totalQuestions = questions.length;
+    const nextIndex = currentQuestionIndex + 1;
 
-    if (currentQuestionIndex < totalQuestions - 1) {
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
+    console.log(`[PROGRESSION] Current: Q${currentQuestionIndex + 1}/${totalQuestions}, Next: Q${nextIndex + 1}/${totalQuestions}`);
+
+    if (nextIndex < totalQuestions) {
+      // Not last question - advance
+      console.log(`[PROGRESSION] Advancing to question ${nextIndex + 1}`);
+      setCurrentQuestionIndex(nextIndex);
     } else {
-      // On last question, stop recording and finish
+      // Last question completed
+      console.log('[PROGRESSION] All questions completed. Stopping recording and finishing interview.');
       stopRecording();
-      setIsInterviewStarted(false);
-      setIsPrepared(false);
-      setQuestions([]);
+      console.log('[PROGRESSION] Recording stopped');
+      
+      // Wait a moment for recording to finalize
+      setTimeout(() => {
+        console.log('[PROGRESSION] Interview complete');
+        setIsInterviewStarted(false);
+        setIsPrepared(false);
+        setQuestions([]);
+      }, 500);
     }
   };
 
@@ -556,37 +725,29 @@ export default function CollectTestimonial() {
             </div>
           )}
 
-          {/* Navigation and control buttons */}
+          {/* Navigation and control buttons - MINIMAL */}
           <div className="interview-controls">
-            <button
-              onClick={() => {
-                window.speechSynthesis.cancel();
-                setIsSpeaking(false);
-                if (currentQuestionIndex > 0) {
-                  setCurrentQuestionIndex(currentQuestionIndex - 1);
-                }
-              }}
-              disabled={currentQuestionIndex === 0}
-              className="btn-secondary"
-            >
-              ← Previous Question
-            </button>
-
-            {currentQuestionIndex < totalQuestions - 1 ? (
+            {/* Previous button (hidden on first question) */}
+            {currentQuestionIndex > 0 && (
               <button
                 onClick={() => {
+                  console.log('[UI] Going to previous question');
                   window.speechSynthesis.cancel();
                   setIsSpeaking(false);
                   stopSilenceDetection();
-                  setCurrentQuestionIndex(currentQuestionIndex + 1);
+                  setCurrentQuestionIndex(currentQuestionIndex - 1);
                 }}
-                className="btn-primary"
+                className="btn-secondary"
               >
-                Next Question →
+                ← Previous
               </button>
-            ) : (
+            )}
+
+            {/* Emergency stop button (only on last question) */}
+            {currentQuestionIndex === totalQuestions - 1 && (
               <button
                 onClick={() => {
+                  console.log('[UI] Emergency finish clicked');
                   window.speechSynthesis.cancel();
                   setIsSpeaking(false);
                   stopRecording();
@@ -594,9 +755,9 @@ export default function CollectTestimonial() {
                   setIsPrepared(false);
                   setQuestions([]);
                 }}
-                className="btn-success"
+                className="btn-danger"
               >
-                Finish Interview
+                🛑 Finish Now
               </button>
             )}
           </div>
