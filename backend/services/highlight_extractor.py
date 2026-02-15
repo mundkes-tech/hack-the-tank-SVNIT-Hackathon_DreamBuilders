@@ -1,38 +1,13 @@
 """
-AI Highlight Extraction Service using Google Gemini.
+AI Highlight Extraction Service using Groq.
 PHASE 3C: Extract 3-5 powerful testimonial highlights from transcript + segments.
 """
-import json
-import os
-import google.genai as genai
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Get API key from environment
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.5-flash"
-
-# Initialize client lazily
-_client = None
-
-def get_genai_client():
-    """
-    Get or create the Gemini client.
-    Raises ValueError if API key is not configured.
-    """
-    global _client
-    if _client is None:
-        if not GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        _client = genai.Client(api_key=GEMINI_API_KEY)
-    return _client
+from services.ai_provider import call_groq_json
 
 
 def extract_highlights(transcript: str, segments: list) -> dict:
     """
-    Extract 3-5 powerful testimonial highlights using Gemini AI.
+    Extract 3-5 powerful testimonial highlights using Groq.
     
     Args:
         transcript: Full transcribed text
@@ -49,14 +24,14 @@ def extract_highlights(transcript: str, segments: list) -> dict:
             }
         ]
     
-    Falls back to longest segments if Gemini fails.
+    Falls back to longest segments if Groq fails.
     """
     
     # Validate inputs
     if not transcript or not segments:
         return {"highlights": []}
     
-    # Build structured prompt for Gemini
+    # Build structured prompt for Groq
     segments_text = "\n".join([
         f"[{seg.get('start', 0):.1f}s - {seg.get('end', 0):.1f}s]: {seg.get('text', '')}"
         for seg in segments
@@ -104,31 +79,11 @@ REQUIRED JSON FORMAT:
 Generate the JSON now:"""
     
     try:
-        print("[HIGHLIGHT] Calling Gemini for highlight extraction...")
-        
-        # Get Gemini client
-        client = get_genai_client()
-        
-        # Call Gemini API
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt
-        )
-        
-        # Extract response text
-        response_text = response.text.strip()
-        
-        # Clean response (remove markdown if present)
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-        response_text = response_text.strip()
-        
-        # Parse JSON
-        data = json.loads(response_text)
+        print("[HIGHLIGHT] Calling Groq for highlight extraction...")
+
+        data, _raw_text = call_groq_json(prompt, temperature=0.2)
+        if data is None:
+            raise ValueError("No JSON parsed from Groq response")
         
         # Validate structure
         if not isinstance(data, dict) or "highlights" not in data:
@@ -147,7 +102,7 @@ Generate the JSON now:"""
         return data
         
     except Exception as e:
-        print(f"[HIGHLIGHT] Gemini extraction failed: {str(e)}")
+        print(f"[HIGHLIGHT] Groq extraction failed: {str(e)}")
         print("[HIGHLIGHT] Falling back to longest segments...")
         
         # Fallback: Select top 3 longest segments

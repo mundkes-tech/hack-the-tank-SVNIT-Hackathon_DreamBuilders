@@ -31,6 +31,19 @@ export interface GenerateQuestionsResponse {
   questions: string[];
 }
 
+export interface Highlight {
+  text: string;
+  start: number;
+  end: number;
+  reason: string;
+}
+
+export interface HighlightExtractionResponse {
+  message: string;
+  highlight_count: number;
+  highlights: Highlight[];
+}
+
 /**
  * Create a new testimonial campaign
  */
@@ -91,6 +104,30 @@ export async function generateQuestions(
       throw new Error('Campaign not found');
     }
     throw new Error(`Failed to generate questions: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Generate highlight extraction for a campaign transcript
+ */
+export async function generateHighlights(
+  campaignId: string
+): Promise<HighlightExtractionResponse> {
+  const response = await fetch(`${API_BASE_URL}/record/highlights/${campaignId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Campaign not found');
+    }
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to generate highlights: ${response.statusText}`);
   }
 
   return response.json();

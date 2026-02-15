@@ -242,6 +242,78 @@
   font-size: 1.1rem;
 }
 
+.results-card h1 {
+  margin-bottom: 0.5rem;
+  text-align: center;
+}
+
+.result-status {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+
+.status-pill {
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.status-success {
+  background: #ecfdf3;
+  color: #047857;
+}
+
+.highlights-section {
+  margin-top: 2rem;
+}
+
+.highlights-section h2 {
+  margin-bottom: 1rem;
+}
+
+.highlight-item {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.highlight-meta {
+  color: #6b7280;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.highlight-text {
+  font-size: 1.05rem;
+  color: #111827;
+  margin-bottom: 0.5rem;
+}
+
+.highlight-reason {
+  color: #4b5563;
+  font-size: 0.95rem;
+}
+
+.result-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 2rem;
+}
+
+.muted {
+  color: #6b7280;
+}
+
 .questions-list {
   background: #f9fafb;
   border-radius: 12px;

@@ -1,11 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import { getCampaign, generateQuestions } from '../services/api';
+import { useNavigate, useParams } from 'react-router-dom';
+import { generateHighlights, generateQuestions, getCampaign } from '../services/api';
+import type { Highlight } from '../services/api';
 import Avatar from '../components/Avatar';
 import './CollectTestimonial.css';
 
 export default function CollectTestimonial() {
   const { campaignId } = useParams<{ campaignId: string }>();
+  const navigate = useNavigate();
 
   // Campaign Data
   const [campaign, setCampaign] = useState<{
@@ -26,6 +28,7 @@ export default function CollectTestimonial() {
   const [isPrepared, setIsPrepared] = useState(false);
   const [isInterviewStarted, setIsInterviewStarted] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
 
   // Speech Synthesis State
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -36,6 +39,11 @@ export default function CollectTestimonial() {
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [highlightsLoading, setHighlightsLoading] = useState(false);
+  const [highlightsError, setHighlightsError] = useState('');
   
   // Refs for immediate access (not subject to state closure issues)
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -77,6 +85,13 @@ export default function CollectTestimonial() {
 
     setLoading(true);
     setError('');
+    setIsCompleted(false);
+    setIsUploading(false);
+    setUploadError('');
+    setHighlights([]);
+    setHighlightsLoading(false);
+    setHighlightsError('');
+    setVideoBlob(null);
 
     try {
       const result = await generateQuestions(campaignId, selectedLanguage);
@@ -94,6 +109,7 @@ export default function CollectTestimonial() {
 
   // Handle "Begin Interview" click
   const handleBeginInterview = () => {
+    setIsCompleted(false);
     setIsInterviewStarted(true);
   };
 
@@ -103,6 +119,13 @@ export default function CollectTestimonial() {
    */
   const getLanguageCode = (): string => {
     return selectedLanguage === 'hindi' ? 'hi-IN' : 'en-US';
+  };
+
+  const formatTimestamp = (seconds: number): string => {
+    if (!Number.isFinite(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   /**
@@ -214,6 +237,9 @@ export default function CollectTestimonial() {
   const uploadVideo = async (blob: Blob, campaignId: string) => {
     try {
       console.log('[UPLOAD] Starting video upload...');
+      setIsUploading(true);
+      setUploadError('');
+      setHighlightsError('');
       
       // Create FormData for multipart/form-data request
       const formData = new FormData();
@@ -234,20 +260,29 @@ export default function CollectTestimonial() {
       
       const result = await response.json();
       console.log('[UPLOAD] Video uploaded and transcribed successfully:', result);
-      
-      // PHASE 3B: Display transcript to user
-      alert(
-        `✅ Testimonial recorded and transcribed!\n\n` +
-        `Segments: ${result.segment_count}\n\n` +
-        `Transcript:\n${result.transcript.substring(0, 200)}${result.transcript.length > 200 ? '...' : ''}`
-      );
-      
+
+      setIsUploading(false);
+      setHighlightsLoading(true);
+
+      try {
+        const highlightsResult = await generateHighlights(campaignId);
+        setHighlights(highlightsResult.highlights || []);
+      } catch (highlightErr) {
+        const message = highlightErr instanceof Error
+          ? highlightErr.message
+          : 'Failed to generate highlights';
+        setHighlightsError(message);
+      } finally {
+        setHighlightsLoading(false);
+      }
+
       return result;
       
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       console.error('[UPLOAD] Video upload failed:', errorMsg);
-      alert(`❌ Failed to save video: ${errorMsg}`);
+      setUploadError(`Failed to save video: ${errorMsg}`);
+      setIsUploading(false);
     }
   };
 
@@ -527,6 +562,7 @@ export default function CollectTestimonial() {
         setIsInterviewStarted(false);
         setIsPrepared(false);
         setQuestions([]);
+        setIsCompleted(true);
       }, 500);
     }
   };
@@ -559,6 +595,77 @@ export default function CollectTestimonial() {
     );
   }
 
+  if (isCompleted) {
+    return (
+      <div className="container">
+        <div className="card results-card">
+          <h1>Thanks for sharing your testimonial!</h1>
+          <p className="subtitle">We are processing your video and extracting highlights.</p>
+
+          <div className="result-status">
+            {isUploading && (
+              <div className="status-pill">Uploading video...</div>
+            )}
+            {!isUploading && !uploadError && (
+              <div className="status-pill status-success">Video saved</div>
+            )}
+            {uploadError && (
+              <div className="error-message">{uploadError}</div>
+            )}
+          </div>
+
+          <div className="highlights-section">
+            <h2>AI Highlights</h2>
+            {highlightsLoading && (
+              <p className="muted">Generating highlights...</p>
+            )}
+            {highlightsError && (
+              <div className="error-message">{highlightsError}</div>
+            )}
+            {!highlightsLoading && !highlightsError && highlights.length === 0 && (
+              <p className="muted">No highlights available yet.</p>
+            )}
+            {highlights.map((highlight, index) => (
+              <div className="highlight-item" key={`${highlight.start}-${highlight.end}-${index}`}>
+                <div className="highlight-meta">
+                  Clip {index + 1} · {formatTimestamp(highlight.start)} - {formatTimestamp(highlight.end)}
+                </div>
+                <div className="highlight-text">"{highlight.text}"</div>
+                <div className="highlight-reason">{highlight.reason}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="result-actions">
+            <button
+              className="btn-secondary"
+              onClick={() => navigate('/')}
+            >
+              Back to Home
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => {
+                setIsCompleted(false);
+                setIsPrepared(false);
+                setQuestions([]);
+                setCurrentQuestionIndex(0);
+                setHighlights([]);
+                setUploadError('');
+                setHighlightsError('');
+                setIsUploading(false);
+                setHighlightsLoading(false);
+                setVideoBlob(null);
+              }}
+            >
+              Record Another
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Initial screen: Show campaign details + language selector
   if (!isPrepared && !loading) {
     return (
@@ -579,7 +686,7 @@ export default function CollectTestimonial() {
           <div className="setup-section">
             <h2>Let's Get Started</h2>
             <p className="setup-description">
-              We'll use AI to guide you through 4 simple questions. Choose your preferred language and begin.
+              We'll use AI to guide you through a short set of questions. Choose your preferred language and begin.
             </p>
 
             <div className="language-selector">
@@ -660,6 +767,12 @@ export default function CollectTestimonial() {
               setIsPrepared(false);
               setQuestions([]);
               setError('');
+              setIsCompleted(false);
+              setHighlights([]);
+              setUploadError('');
+              setHighlightsError('');
+              setIsUploading(false);
+              setHighlightsLoading(false);
             }}
             className="btn-secondary"
           >
@@ -754,6 +867,7 @@ export default function CollectTestimonial() {
                   setIsInterviewStarted(false);
                   setIsPrepared(false);
                   setQuestions([]);
+                  setIsCompleted(true);
                 }}
                 className="btn-danger"
               >

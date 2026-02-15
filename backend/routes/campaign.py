@@ -112,7 +112,7 @@ def generate_questions(
     db: Session = Depends(get_db)
 ):
     """
-    Generate testimonial interview questions for a campaign using Gemini AI.
+    Generate testimonial interview questions for a campaign using Groq.
     
     - Fetches campaign from database
     - Calls AI service to generate 4 questions

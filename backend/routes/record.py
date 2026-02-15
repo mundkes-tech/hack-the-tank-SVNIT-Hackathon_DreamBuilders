@@ -341,7 +341,7 @@ def generate_highlights(
     """
     Generate AI-powered highlight extraction for a campaign's transcript.
     
-    PHASE 3C: Uses Gemini to analyze transcript and segments,
+    PHASE 3C: Uses Groq to analyze transcript and segments,
     extracting 3-5 most impactful testimonial moments.
     
     Args:
@@ -393,7 +393,7 @@ def generate_highlights(
             detail=f"Failed to parse segments JSON: {str(e)}"
         )
     
-    # Extract highlights using Gemini AI
+    # Extract highlights using Groq
     try:
         print(f"[HIGHLIGHT] Extracting highlights for campaign: {campaign_id}")
         result = extract_highlights(campaign.transcript, segments)
