@@ -44,6 +44,11 @@ export interface HighlightExtractionResponse {
   highlights: Highlight[];
 }
 
+export interface ReelGenerationResponse {
+  message: string;
+  reel_path: string;
+}
+
 /**
  * Create a new testimonial campaign
  */
@@ -128,6 +133,31 @@ export async function generateHighlights(
     }
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail || `Failed to generate highlights: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * PHASE 3D: Generate final testimonial reel from extracted highlights
+ * Uses MoviePy backend to concatenate highlight clips into final video
+ */
+export async function generateReel(
+  campaignId: string
+): Promise<ReelGenerationResponse> {
+  const response = await fetch(`${API_BASE_URL}/record/generate-reel/${campaignId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Campaign not found');
+    }
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to generate reel: ${response.statusText}`);
   }
 
   return response.json();

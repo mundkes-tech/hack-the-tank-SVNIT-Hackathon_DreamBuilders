@@ -3,8 +3,10 @@ Record routes for handling video uploads and persistent storage.
 PHASE 3A: Video Upload & Persistent Storage
 PHASE 3B: Whisper Transcription
 PHASE 3C: AI Highlight Extraction
+PHASE 3D: Automatic Reel Generation
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -17,6 +19,7 @@ from pathlib import Path
 from database import get_db
 from models import Campaign
 from services.highlight_extractor import extract_highlights
+from services.reel_generator import generate_reel
 
 
 # Load Whisper model once at module level (not per-request)
@@ -42,6 +45,11 @@ class HighlightExtractionResponse(BaseModel):
     message: str
     highlight_count: int
     highlights: List[Dict[str, Any]]
+
+
+class ReelGenerationResponse(BaseModel):
+    message: str
+    reel_path: str  # PHASE 3D: Path to generated reel video
 
 
 # Configuration
@@ -428,3 +436,123 @@ def generate_highlights(
             status_code=500,
             detail=f"Highlight extraction failed: {str(e)}"
         )
+
+
+@router.post("/generate-reel/{campaign_id}", response_model=ReelGenerationResponse)
+def generate_reel_endpoint(
+    campaign_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate final testimonial reel from extracted highlights.
+    
+    PHASE 3D: Uses MoviePy to automatically:
+    - Load original uploaded video
+    - Extract clips for each highlight
+    - Concatenate clips in sequence
+    - Save final reel as MP4 video
+    - Store reel path in database (optional)
+    
+    Args:
+        campaign_id: Unique campaign identifier
+        db: Database session (dependency injection)
+    
+    Returns:
+        ReelGenerationResponse with success message and reel file path
+    
+    Raises:
+        404: If campaign not found
+        400: If no highlights available or video file missing
+        500: If reel generation fails
+    
+    Flow:
+    1. Validate campaign exists
+    2. Validate highlights exist in database
+    3. Load original video from uploads/
+    4. Call reel_generator.generate_reel()
+    5. Return reel path to frontend
+    """
+    
+    # Validate campaign exists
+    campaign = get_campaign_or_404(campaign_id, db)
+    
+    # Validate highlights exist
+    if not campaign.highlights:
+        raise HTTPException(
+            status_code=400,
+            detail="No highlights available. Please extract highlights first."
+        )
+    
+    # Construct video path
+    video_filename = f"{campaign_id}.webm"
+    video_path = UPLOADS_DIR / video_filename
+    
+    # Generate reel using MoviePy
+    try:
+        print(f"[REEL] Starting reel generation for campaign: {campaign_id}")
+        
+        result = generate_reel(
+            campaign_id=campaign_id,
+            highlights_json=campaign.highlights,
+            video_path=video_path
+        )
+        
+        # Optionally store reel path in database
+        # campaign.reel_path = result["reel_path"]  # Requires adding field to model
+        # db.commit()
+        
+        print(f"[REEL] Reel generation complete: {result['reel_path']}")
+        
+        return ReelGenerationResponse(
+            message=result["message"],
+            reel_path=result["reel_path"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[REEL] Error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Reel generation failed: {str(e)}"
+        )
+
+
+@router.get("/reel/{campaign_id}")
+def download_reel(campaign_id: str):
+    """
+    Download generated reel video file.
+    
+    PHASE 3D: Serves the generated MP4 reel for download.
+    
+    Args:
+        campaign_id: Unique campaign identifier
+    
+    Returns:
+        FileResponse with MP4 video file
+    
+    Raises:
+        404: If reel file not found for campaign
+    """
+    
+    reel_filename = f"final_{campaign_id}.mp4"
+    reel_path = Path("outputs") / reel_filename
+    
+    # Validate reel file exists
+    if not reel_path.exists():
+        print(f"[DOWNLOAD] Reel file not found: {reel_path}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reel file not found. Generate reel first."
+        )
+    
+    # Log download request
+    print(f"[DOWNLOAD] Serving reel: {reel_path}")
+    
+    # Return file with proper headers for streaming/download
+    return FileResponse(
+        path=reel_path,
+        filename=reel_filename,
+        media_type="video/mp4",
+        headers={"Content-Disposition": f"attachment; filename={reel_filename}"}
+    )

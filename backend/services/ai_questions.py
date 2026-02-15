@@ -26,7 +26,7 @@ FALLBACK_QUESTIONS_HINDI = {
 }
 
 MIN_QUESTIONS = 3
-MAX_QUESTIONS = 10
+MAX_QUESTIONS = 5
 
 
 def validate_questions_format(data: dict) -> bool:
@@ -85,7 +85,7 @@ Given this business context: {prompt}
 
 {lang_instruction}
 
-Generate a concise set of 3-10 testimonial interview questions tailored to this business context.
+Generate a concise set of 3-5 testimonial interview questions tailored to this business context.
 The questions should be specific to the product or service, not generic.
 Cover a natural flow (pain/problem, experience, outcomes, standout moments, recommendation),
 but do not force a fixed structure or count.

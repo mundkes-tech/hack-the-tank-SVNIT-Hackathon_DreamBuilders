@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { generateHighlights, generateQuestions, getCampaign } from '../services/api';
+import { generateHighlights, generateQuestions, getCampaign, generateReel } from '../services/api';
 import type { Highlight } from '../services/api';
 import Avatar from '../components/Avatar';
 import './CollectTestimonial.css';
@@ -44,6 +44,11 @@ export default function CollectTestimonial() {
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [highlightsLoading, setHighlightsLoading] = useState(false);
   const [highlightsError, setHighlightsError] = useState('');
+
+  // Reel Generation State (PHASE 3D)
+  const [isGeneratingReel, setIsGeneratingReel] = useState(false);
+  const [reelPath, setReelPath] = useState('');
+  const [reelError, setReelError] = useState('');
   
   // Refs for immediate access (not subject to state closure issues)
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -283,6 +288,32 @@ export default function CollectTestimonial() {
       console.error('[UPLOAD] Video upload failed:', errorMsg);
       setUploadError(`Failed to save video: ${errorMsg}`);
       setIsUploading(false);
+    }
+  };
+
+  /**
+   * PHASE 3D: Generate final testimonial reel from highlights
+   * Uses MoviePy backend to concatenate highlight clips
+   */
+  const handleGenerateReel = async () => {
+    if (!campaignId) return;
+    
+    try {
+      console.log('[REEL] Starting reel generation...');
+      setIsGeneratingReel(true);
+      setReelError('');
+      
+      const response = await generateReel(campaignId);
+      
+      console.log('[REEL] Reel generated successfully:', response);
+      setReelPath(response.reel_path);
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Failed to generate reel';
+      console.error('[REEL] Reel generation failed:', errorMsg);
+      setReelError(errorMsg);
+    } finally {
+      setIsGeneratingReel(false);
     }
   };
 
@@ -636,7 +667,44 @@ export default function CollectTestimonial() {
             ))}
           </div>
 
-          <div className="result-actions">
+          {/* PHASE 3D: Reel preview section */}
+          {reelPath && (
+            <div className="reel-preview-section">
+              <h2>Your Final Reel</h2>
+              <video width="100%" controls style={{ borderRadius: '8px', marginBottom: '20px' }}>
+                <source src={`http://127.0.0.1:8001/record/reel/${campaignId}`} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+              <a 
+                href={`http://127.0.0.1:8001/record/reel/${campaignId}`} 
+                download 
+                className="btn-primary"
+                style={{ display: 'inline-block', marginBottom: '20px', padding: '12px 24px' }}
+              >
+                📥 Download Reel
+              </a>
+            </div>
+          )}
+
+          {/* Error handling for reel generation */}
+          {reelError && (
+            <div className="error-message">{reelError}</div>
+          )}
+
+          <div className="result-actions"
+              >
+            {/* PHASE 3D: Reel generation button */}
+            {!reelPath && highlights.length > 0 && (
+              <button
+                className="btn-highlight"
+                onClick={handleGenerateReel}
+                disabled={isGeneratingReel}
+                style={{ marginRight: '10px' }}
+              >
+                {isGeneratingReel ? '🔄 Generating Reel...' : '🎬 Generate Final Reel'}
+              </button>
+            )}
+            
             <button
               className="btn-secondary"
               onClick={() => navigate('/')}
@@ -656,6 +724,9 @@ export default function CollectTestimonial() {
                 setIsUploading(false);
                 setHighlightsLoading(false);
                 setVideoBlob(null);
+                setReelPath('');
+                setReelError('');
+                setIsGeneratingReel(false);
               }}
             >
               Record Another
