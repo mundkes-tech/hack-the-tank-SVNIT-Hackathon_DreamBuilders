@@ -49,6 +49,11 @@ export interface ReelGenerationResponse {
   reel_path: string;
 }
 
+export interface ReelCustomizationOptions {
+  aspect_ratio: 'landscape' | 'portrait' | 'square';
+  add_subtitles: boolean;
+}
+
 /**
  * Create a new testimonial campaign
  */
@@ -140,16 +145,22 @@ export async function generateHighlights(
 
 /**
  * PHASE 3D: Generate final testimonial reel from extracted highlights
+ * PHASE 3E: Enhanced with customization options (subtitles, aspect ratio)
  * Uses MoviePy backend to concatenate highlight clips into final video
  */
 export async function generateReel(
-  campaignId: string
+  campaignId: string,
+  options?: ReelCustomizationOptions
 ): Promise<ReelGenerationResponse> {
   const response = await fetch(`${API_BASE_URL}/record/generate-reel/${campaignId}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify(options || {
+      aspect_ratio: 'landscape',
+      add_subtitles: true
+    }),
   });
 
   if (!response.ok) {

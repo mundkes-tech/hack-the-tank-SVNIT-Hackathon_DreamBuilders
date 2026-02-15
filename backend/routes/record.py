@@ -52,6 +52,15 @@ class ReelGenerationResponse(BaseModel):
     reel_path: str  # PHASE 3D: Path to generated reel video
 
 
+class ReelCustomizationRequest(BaseModel):
+    """
+    PHASE 3E: Customization options for reel generation.
+    """
+    aspect_ratio: str = "landscape"  # Options: landscape, portrait, square
+    add_subtitles: bool = True  # Auto-subtitles from Whisper segments
+    # logo_path: Optional[str] = None  # Future: logo upload
+
+
 # Configuration
 UPLOADS_DIR = Path("uploads")
 
@@ -441,6 +450,7 @@ def generate_highlights(
 @router.post("/generate-reel/{campaign_id}", response_model=ReelGenerationResponse)
 def generate_reel_endpoint(
     campaign_id: str,
+    options: ReelCustomizationRequest = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -451,10 +461,15 @@ def generate_reel_endpoint(
     - Extract clips for each highlight
     - Concatenate clips in sequence
     - Save final reel as MP4 video
-    - Store reel path in database (optional)
+    
+    PHASE 3E: Enhanced with customization options:
+    - Auto-subtitles from Whisper transcript
+    - Aspect ratio conversion (landscape/portrait/square)
+    - Logo watermark (future)
     
     Args:
         campaign_id: Unique campaign identifier
+        options: Customization options (aspect_ratio, add_subtitles)
         db: Database session (dependency injection)
     
     Returns:
@@ -464,14 +479,11 @@ def generate_reel_endpoint(
         404: If campaign not found
         400: If no highlights available or video file missing
         500: If reel generation fails
-    
-    Flow:
-    1. Validate campaign exists
-    2. Validate highlights exist in database
-    3. Load original video from uploads/
-    4. Call reel_generator.generate_reel()
-    5. Return reel path to frontend
     """
+    
+    # Default options if not provided
+    if options is None:
+        options = ReelCustomizationRequest()
     
     # Validate campaign exists
     campaign = get_campaign_or_404(campaign_id, db)
@@ -490,11 +502,15 @@ def generate_reel_endpoint(
     # Generate reel using MoviePy
     try:
         print(f"[REEL] Starting reel generation for campaign: {campaign_id}")
+        print(f"[REEL] Options: aspect_ratio={options.aspect_ratio}, subtitles={options.add_subtitles}")
         
         result = generate_reel(
             campaign_id=campaign_id,
             highlights_json=campaign.highlights,
-            video_path=video_path
+            video_path=video_path,
+            segments_json=campaign.segments if options.add_subtitles else None,
+            aspect_ratio=options.aspect_ratio,
+            logo_path=None  # Future: support logo upload
         )
         
         # Optionally store reel path in database

@@ -1,12 +1,19 @@
 """
 Automatic Reel Generation Service using MoviePy.
 PHASE 3D: Generate final testimonial reel from extracted highlights.
+PHASE 3E: Add subtitles, logo watermark, and aspect ratio conversion.
 """
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Any
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from typing import Dict, List, Any, Optional
+from moviepy.editor import (
+    VideoFileClip, 
+    concatenate_videoclips, 
+    TextClip, 
+    CompositeVideoClip,
+    ImageClip
+)
 from fastapi import HTTPException
 
 
@@ -64,7 +71,160 @@ def validate_highlight_timestamps(
         return False
 
 
-def generate_reel(campaign_id: str, highlights_json: str, video_path: Path) -> Dict[str, str]:
+def add_subtitles_to_clip(clip: VideoFileClip, segments: List[Dict], clip_start_time: float) -> VideoFileClip:
+    """
+    PHASE 3E: Add subtitles to a video clip based on Whisper segments.
+    
+    Args:
+        clip: Video clip to add subtitles to
+        segments: Whisper transcription segments with start, end, text
+        clip_start_time: Start time of this clip in the original video
+    
+    Returns:
+        Video clip with subtitles overlaid
+    """
+    try:
+        clip_end_time = clip_start_time + clip.duration
+        subtitle_clips = []
+        
+        # Find segments that overlap with this clip
+        for segment in segments:
+            seg_start = float(segment.get("start", 0))
+            seg_end = float(segment.get("end", 0))
+            text = segment.get("text", "").strip()
+            
+            if not text:
+                continue
+            
+            # Check if segment overlaps with clip timeframe
+            if seg_end < clip_start_time or seg_start > clip_end_time:
+                continue
+            
+            # Adjust segment timing relative to clip
+            subtitle_start = max(0, seg_start - clip_start_time)
+            subtitle_end = min(clip.duration, seg_end - clip_start_time)
+            subtitle_duration = subtitle_end - subtitle_start
+            
+            if subtitle_duration <= 0:
+                continue
+            
+            # Create subtitle text clip
+            txt_clip = TextClip(
+                text,
+                fontsize=40,
+                color='white',
+                font='Arial-Bold',
+                stroke_color='black',
+                stroke_width=2,
+                method='caption',
+                size=(clip.w - 100, None),  # Leave margins
+                align='center'
+            )
+            
+            # Position at bottom center
+            txt_clip = txt_clip.set_position(('center', clip.h - 150))
+            txt_clip = txt_clip.set_start(subtitle_start)
+            txt_clip = txt_clip.set_duration(subtitle_duration)
+            
+            subtitle_clips.append(txt_clip)
+        
+        # If subtitles exist, composite them onto the video
+        if subtitle_clips:
+            return CompositeVideoClip([clip] + subtitle_clips)
+        return clip
+        
+    except Exception as e:
+        print(f"[REEL] Warning: Failed to add subtitles: {str(e)}")
+        return clip  # Return original clip if subtitles fail
+
+
+def add_logo_watermark(clip: VideoFileClip, logo_path: Optional[Path]) -> VideoFileClip:
+    """
+    PHASE 3E: Add logo watermark to bottom-right corner.
+    
+    Args:
+        clip: Video clip to add logo to
+        logo_path: Path to logo image file (PNG recommended for transparency)
+    
+    Returns:
+        Video clip with logo watermark
+    """
+    if not logo_path or not logo_path.exists():
+        return clip
+    
+    try:
+        # Load logo image
+        logo = ImageClip(str(logo_path))
+        
+        # Resize logo to 10% of video width (maintain aspect ratio)
+        logo_width = int(clip.w * 0.1)
+        logo = logo.resize(width=logo_width)
+        
+        # Position at bottom-right with 20px padding
+        logo = logo.set_position((clip.w - logo.w - 20, clip.h - logo.h - 20))
+        logo = logo.set_duration(clip.duration)
+        
+        # Composite logo onto video
+        return CompositeVideoClip([clip, logo])
+        
+    except Exception as e:
+        print(f"[REEL] Warning: Failed to add logo watermark: {str(e)}")
+        return clip  # Return original clip if logo fails
+
+
+def convert_aspect_ratio(clip: VideoFileClip, aspect_ratio: str) -> VideoFileClip:
+    """
+    PHASE 3E: Convert video to specified aspect ratio.
+    
+    Args:
+        clip: Video clip to convert
+        aspect_ratio: 'landscape' (16:9), 'portrait' (9:16), or 'square' (1:1)
+    
+    Returns:
+        Video clip with converted aspect ratio
+    """
+    try:
+        original_w, original_h = clip.w, clip.h
+        
+        if aspect_ratio == 'portrait':
+            # 9:16 (vertical - Instagram/TikTok)
+            target_ratio = 9 / 16
+            target_h = original_h
+            target_w = int(target_h * target_ratio)
+            
+        elif aspect_ratio == 'square':
+            # 1:1 (square - Instagram)
+            target_size = min(original_w, original_h)
+            target_w = target_h = target_size
+            
+        else:  # landscape (default)
+            # 16:9 (horizontal - YouTube)
+            return clip  # Most videos are already 16:9
+        
+        # Center crop to target aspect ratio
+        if target_w < original_w or target_h < original_h:
+            x_center = original_w / 2
+            y_center = original_h / 2
+            x1 = int(x_center - target_w / 2)
+            y1 = int(y_center - target_h / 2)
+            
+            return clip.crop(x1=x1, y1=y1, width=target_w, height=target_h)
+        
+        return clip
+        
+    except Exception as e:
+        print(f"[REEL] Warning: Failed to convert aspect ratio: {str(e)}")
+        return clip  # Return original clip if conversion fails
+
+
+def generate_reel(
+    campaign_id: str, 
+    highlights_json: str, 
+    video_path: Path,
+    segments_json: Optional[str] = None,
+    aspect_ratio: str = "landscape",
+    logo_path: Optional[Path] = None
+) -> Dict[str, str]:
     """
     Generate final testimonial reel from video and highlights.
     
@@ -74,10 +234,18 @@ def generate_reel(campaign_id: str, highlights_json: str, video_path: Path) -> D
     - Concatenate clips in order
     - Save final reel as MP4
     
+    PHASE 3E: Enhanced with:
+    - Auto-subtitles from Whisper segments
+    - Logo watermark overlay
+    - Aspect ratio conversion (landscape/portrait/square)
+    
     Args:
         campaign_id: Unique campaign identifier
         highlights_json: JSON string containing highlights list
         video_path: Path to original video file
+        segments_json: Optional JSON string with Whisper segments for subtitles
+        aspect_ratio: 'landscape', 'portrait', or 'square' (default: 'landscape')
+        logo_path: Optional path to logo image for watermark
     
     Returns:
         Dictionary with:
@@ -120,6 +288,15 @@ def generate_reel(campaign_id: str, highlights_json: str, video_path: Path) -> D
     # Ensure output directory exists
     ensure_output_directory()
     
+    # Parse segments for subtitles (PHASE 3E)
+    segments = []
+    if segments_json:
+        try:
+            segments = json.loads(segments_json)
+            print(f"[REEL] Loaded {len(segments)} segments for subtitles")
+        except json.JSONDecodeError:
+            print("[REEL] Warning: Failed to parse segments JSON, proceeding without subtitles")
+    
     # Load video file
     video = None
     try:
@@ -161,6 +338,23 @@ def generate_reel(campaign_id: str, highlights_json: str, video_path: Path) -> D
                 # Extract subclip
                 clip = video.subclip(start, end)
                 print(f"[REEL] ✓ Clip {idx} extracted (fps: {clip.fps}, duration: {clip.duration:.3f}s)")
+                
+                # PHASE 3E: Apply customizations
+                # 1. Convert aspect ratio
+                if aspect_ratio != "landscape":
+                    print(f"[REEL] ↻ Converting clip {idx} to {aspect_ratio} aspect ratio...")
+                    clip = convert_aspect_ratio(clip, aspect_ratio)
+                
+                # 2. Add subtitles if segments available
+                if segments:
+                    print(f"[REEL] ✏ Adding subtitles to clip {idx}...")
+                    clip = add_subtitles_to_clip(clip, segments, start)
+                
+                # 3. Add logo watermark if provided
+                if logo_path:
+                    print(f"[REEL] 🏷 Adding logo watermark to clip {idx}...")
+                    clip = add_logo_watermark(clip, logo_path)
+                
                 clips.append(clip)
                 valid_highlight_count += 1
                 

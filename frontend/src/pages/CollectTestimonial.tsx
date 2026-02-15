@@ -50,6 +50,10 @@ export default function CollectTestimonial() {
   const [reelPath, setReelPath] = useState('');
   const [reelError, setReelError] = useState('');
   
+  // Reel Customization State (PHASE 3E)
+  const [aspectRatio, setAspectRatio] = useState('landscape');
+  const [addSubtitles, setAddSubtitles] = useState(true);
+  
   // Refs for immediate access (not subject to state closure issues)
   const analyserRef = useRef<AnalyserNode | null>(null);
   
@@ -299,11 +303,14 @@ export default function CollectTestimonial() {
     if (!campaignId) return;
     
     try {
-      console.log('[REEL] Starting reel generation...');
+      console.log('[REEL] Starting reel generation with options:', { aspectRatio, addSubtitles });
       setIsGeneratingReel(true);
       setReelError('');
       
-      const response = await generateReel(campaignId);
+      const response = await generateReel(campaignId, {
+        aspect_ratio: aspectRatio,
+        add_subtitles: addSubtitles
+      });
       
       console.log('[REEL] Reel generated successfully:', response);
       setReelPath(response.reel_path);
@@ -693,6 +700,47 @@ export default function CollectTestimonial() {
 
           <div className="result-actions"
               >
+            {/* PHASE 3E: Reel customization options */}
+            {!reelPath && highlights.length > 0 && (
+              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    Aspect Ratio:
+                  </label>
+                  <select 
+                    value={aspectRatio} 
+                    onChange={(e) => setAspectRatio(e.target.value)}
+                    disabled={isGeneratingReel}
+                    style={{ 
+                      padding: '8px 12px', 
+                      fontSize: '14px', 
+                      borderRadius: '5px', 
+                      border: '1px solid #ccc',
+                      width: '100%',
+                      maxWidth: '300px'
+                    }}
+                  >
+                    <option value="landscape">Landscape (16:9) - YouTube</option>
+                    <option value="portrait">Portrait (9:16) - TikTok/Reels</option>
+                    <option value="square">Square (1:1) - Instagram</option>
+                  </select>
+                </div>
+                
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={addSubtitles} 
+                      onChange={(e) => setAddSubtitles(e.target.checked)}
+                      disabled={isGeneratingReel}
+                      style={{ marginRight: '8px', cursor: 'pointer' }}
+                    />
+                    <span>Add auto-generated subtitles</span>
+                  </label>
+                </div>
+              </div>
+            )}
+            
             {/* PHASE 3D: Reel generation button */}
             {!reelPath && highlights.length > 0 && (
               <button
