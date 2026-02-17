@@ -26,17 +26,81 @@
   transition: all 0.3s ease;
 }
 
-/* Avatar content (emoji) */
-.avatar-content {
-  font-size: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.avatar-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  inset: 8px;
 }
 
-.avatar-emoji {
-  display: inline-block;
+.avatar-ring.ring-2 {
+  inset: 16px;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.avatar-core {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: inset 0 -8px 18px rgba(15, 23, 42, 0.12);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+  z-index: 3;
+}
+
+.avatar-silhouette {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 12px;
   animation: idle-float 3s ease-in-out infinite;
+}
+
+.avatar-head {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(248, 250, 252, 0.98);
+  box-shadow: inset 0 -6px 10px rgba(148, 163, 184, 0.25);
+  position: relative;
+}
+
+.avatar-head::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.7);
+  box-shadow: 14px 0 0 rgba(148, 163, 184, 0.7);
+  transform: translateX(-10px);
+}
+
+.avatar-head::after {
+  content: '';
+  position: absolute;
+  top: 26px;
+  left: 50%;
+  width: 18px;
+  height: 8px;
+  border: 2px solid rgba(148, 163, 184, 0.6);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  transform: translateX(-9px);
+}
+
+.avatar-shoulders {
+  width: 86px;
+  height: 40px;
+  border-radius: 50px 50px 28px 28px;
+  background: rgba(226, 232, 240, 0.92);
+  margin-top: -12px;
+  box-shadow: inset 0 6px 10px rgba(15, 23, 42, 0.08);
 }
 
 /* Idle floating animation */
@@ -132,8 +196,43 @@
     height: 120px;
   }
 
-  .avatar-content {
-    font-size: 48px;
+  .avatar-ring {
+    inset: 6px;
+  }
+
+  .avatar-ring.ring-2 {
+    inset: 12px;
+  }
+
+  .avatar-core {
+    width: 82px;
+    height: 82px;
+  }
+
+  .avatar-head {
+    width: 38px;
+    height: 38px;
+  }
+
+  .avatar-head::before {
+    top: 12px;
+    width: 5px;
+    height: 5px;
+    box-shadow: 12px 0 0 rgba(148, 163, 184, 0.7);
+    transform: translateX(-8px);
+  }
+
+  .avatar-head::after {
+    top: 22px;
+    width: 16px;
+    height: 7px;
+    transform: translateX(-8px);
+  }
+
+  .avatar-shoulders {
+    width: 72px;
+    height: 34px;
+    margin-top: -10px;
   }
 
   .avatar-glow {

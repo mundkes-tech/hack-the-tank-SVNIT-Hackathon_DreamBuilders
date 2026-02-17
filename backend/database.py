@@ -1,7 +1,7 @@
 """
 Database configuration and session management.
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -39,3 +39,20 @@ def init_db():
     Called on application startup.
     """
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight schema migration for existing SQLite databases
+    # Adds new nullable columns if they do not exist.
+    with engine.connect() as connection:
+        column_rows = connection.execute(text("PRAGMA table_info(campaigns)")).fetchall()
+        existing_columns = {row[1] for row in column_rows}
+
+        if "edited_highlights" not in existing_columns:
+            connection.execute(text("ALTER TABLE campaigns ADD COLUMN edited_highlights TEXT"))
+
+        if "logo_path" not in existing_columns:
+            connection.execute(text("ALTER TABLE campaigns ADD COLUMN logo_path TEXT"))
+
+        if "bgm_path" not in existing_columns:
+            connection.execute(text("ALTER TABLE campaigns ADD COLUMN bgm_path TEXT"))
+
+        connection.commit()

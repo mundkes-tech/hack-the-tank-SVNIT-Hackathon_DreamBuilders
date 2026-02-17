@@ -12,7 +12,10 @@ from moviepy.editor import (
     concatenate_videoclips, 
     TextClip, 
     CompositeVideoClip,
-    ImageClip
+    ImageClip,
+    AudioFileClip,
+    CompositeAudioClip,
+    afx
 )
 from fastapi import HTTPException
 
@@ -217,13 +220,59 @@ def convert_aspect_ratio(clip: VideoFileClip, aspect_ratio: str) -> VideoFileCli
         return clip  # Return original clip if conversion fails
 
 
+def apply_background_music(
+    clip: VideoFileClip,
+    bgm_path: Optional[Path],
+    bgm_volume: float = 0.2,
+    ducking_strength: float = 0.35
+) -> tuple[VideoFileClip, Optional[AudioFileClip]]:
+    """
+    PHASE B: Add background music with speech-priority ducking.
+
+    Args:
+        clip: Final concatenated video clip
+        bgm_path: Path to background music file
+        bgm_volume: Base music volume (0.0 - 1.0)
+        ducking_strength: Reduction factor while speech is present (0.0 - 1.0)
+
+    Returns:
+        Tuple of updated video clip and allocated AudioFileClip for cleanup
+    """
+    if not bgm_path or not bgm_path.exists():
+        print("[REEL] Background music file not found. Skipping BGM mix.")
+        return clip, None
+
+    try:
+        safe_bgm_volume = max(0.0, min(1.0, bgm_volume))
+        safe_ducking_strength = max(0.0, min(1.0, ducking_strength))
+
+        bgm_source = AudioFileClip(str(bgm_path))
+        bgm_track = afx.audio_loop(bgm_source, duration=clip.duration)
+
+        # Speech-priority mixing: keep BGM low to avoid masking testimonial speech.
+        ducked_bgm_track = bgm_track.volumex(safe_bgm_volume * safe_ducking_strength)
+
+        if clip.audio:
+            mixed_audio = CompositeAudioClip([clip.audio, ducked_bgm_track])
+            return clip.set_audio(mixed_audio), bgm_source
+
+        return clip.set_audio(ducked_bgm_track), bgm_source
+
+    except Exception as e:
+        print(f"[REEL] Warning: Failed to apply background music: {str(e)}")
+        return clip, None
+
+
 def generate_reel(
     campaign_id: str, 
     highlights_json: str, 
     video_path: Path,
     segments_json: Optional[str] = None,
     aspect_ratio: str = "landscape",
-    logo_path: Optional[Path] = None
+    logo_path: Optional[Path] = None,
+    bgm_path: Optional[Path] = None,
+    bgm_volume: float = 0.2,
+    ducking_strength: float = 0.35
 ) -> Dict[str, str]:
     """
     Generate final testimonial reel from video and highlights.
@@ -382,10 +431,21 @@ def generate_reel(
     
     # Concatenate clips
     final_clip = None
+    bgm_source = None
     try:
         print(f"[REEL] Concatenating {len(clips)} clips...")
         final_clip = concatenate_videoclips(clips)
         print(f"[REEL] Concatenation complete (final duration: {final_clip.duration:.2f}s)")
+
+        # PHASE B: Add background music with ducking
+        if bgm_path:
+            print(f"[REEL] 🎵 Applying background music: {bgm_path}")
+            final_clip, bgm_source = apply_background_music(
+                final_clip,
+                bgm_path=bgm_path,
+                bgm_volume=bgm_volume,
+                ducking_strength=ducking_strength
+            )
         
     except Exception as e:
         # Clean up loaded clips
@@ -436,6 +496,9 @@ def generate_reel(
             if final_clip:
                 final_clip.close()
             video.close()
+
+            if bgm_source:
+                bgm_source.close()
             
             # Clean up individual clips
             for clip in clips:

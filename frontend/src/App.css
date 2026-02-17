@@ -1,4 +1,38 @@
 .app {
   min-height: 100vh;
-  background: linear-gradient(to bottom, #f9fafb, #f3f4f6);
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+}
+
+.app::before,
+.app::after {
+  content: '';
+  position: fixed;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: -1;
+  filter: blur(40px);
+}
+
+.app::before {
+  top: -150px;
+  left: -100px;
+  background: rgba(99, 102, 241, 0.16);
+}
+
+.app::after {
+  right: -120px;
+  bottom: -180px;
+  background: rgba(6, 182, 212, 0.16);
+}
+
+@media (max-width: 768px) {
+  .app::before,
+  .app::after {
+    width: 280px;
+    height: 280px;
+  }
 }

@@ -20,8 +20,13 @@ export default function Avatar({ isSpeaking }: AvatarProps) {
 
       {/* Main avatar circle */}
       <div className="avatar-circle">
-        <div className="avatar-content">
-          <span className="avatar-emoji">🤖</span>
+        <div className="avatar-ring ring-1" aria-hidden="true"></div>
+        <div className="avatar-ring ring-2" aria-hidden="true"></div>
+        <div className="avatar-core" aria-hidden="true">
+          <div className="avatar-silhouette">
+            <div className="avatar-head"></div>
+            <div className="avatar-shoulders"></div>
+          </div>
         </div>
       </div>
 

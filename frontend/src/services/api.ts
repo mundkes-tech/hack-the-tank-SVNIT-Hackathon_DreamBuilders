@@ -52,6 +52,19 @@ export interface ReelGenerationResponse {
 export interface ReelCustomizationOptions {
   aspect_ratio: 'landscape' | 'portrait' | 'square';
   add_subtitles: boolean;
+  add_background_music?: boolean;
+  bgm_volume?: number;
+  ducking_strength?: number;
+}
+
+export interface LogoUploadResponse {
+  message: string;
+  logo_url: string;
+}
+
+export interface MusicUploadResponse {
+  message: string;
+  music_url: string;
 }
 
 /**
@@ -138,6 +151,99 @@ export async function generateHighlights(
     }
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail || `Failed to generate highlights: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * PHASE A: Fetch edited highlights (falls back to AI highlights on backend)
+ */
+export async function getEditedHighlights(
+  campaignId: string
+): Promise<HighlightExtractionResponse> {
+  const response = await fetch(`${API_BASE_URL}/record/edited-highlights/${campaignId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('No highlights available');
+    }
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to fetch edited highlights: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * PHASE A: Save manually edited highlights
+ */
+export async function saveEditedHighlights(
+  campaignId: string,
+  highlights: Highlight[]
+): Promise<HighlightExtractionResponse> {
+  const response = await fetch(`${API_BASE_URL}/record/edited-highlights/${campaignId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ highlights }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to save edited highlights: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * PHASE A: Upload campaign logo for reel watermark
+ */
+export async function uploadCampaignLogo(
+  campaignId: string,
+  file: File
+): Promise<LogoUploadResponse> {
+  const formData = new FormData();
+  formData.append('logo', file);
+
+  const response = await fetch(`${API_BASE_URL}/record/logo/${campaignId}`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to upload logo: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * PHASE B: Upload campaign background music for reel mixing
+ */
+export async function uploadCampaignMusic(
+  campaignId: string,
+  file: File
+): Promise<MusicUploadResponse> {
+  const formData = new FormData();
+  formData.append('music', file);
+
+  const response = await fetch(`${API_BASE_URL}/record/music/${campaignId}`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || `Failed to upload background music: ${response.statusText}`);
   }
 
   return response.json();

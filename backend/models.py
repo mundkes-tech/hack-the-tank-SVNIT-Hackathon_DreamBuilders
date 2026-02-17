@@ -20,6 +20,9 @@ class Campaign(Base):
     transcript = Column(Text, nullable=True)  # PHASE 3B: Whisper transcription
     segments = Column(Text, nullable=True)  # PHASE 3B: JSON string of segments
     highlights = Column(Text, nullable=True)  # PHASE 3C: JSON string of highlights
+    edited_highlights = Column(Text, nullable=True)  # PHASE A: Manual clip edits JSON
+    logo_path = Column(Text, nullable=True)  # PHASE A: Campaign logo file path
+    bgm_path = Column(Text, nullable=True)  # PHASE B: Campaign background music file path
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     def __repr__(self):

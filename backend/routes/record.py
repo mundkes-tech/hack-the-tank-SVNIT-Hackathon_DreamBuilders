@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import json
-import os
 import subprocess
 import time
 from pathlib import Path
@@ -52,17 +51,35 @@ class ReelGenerationResponse(BaseModel):
     reel_path: str  # PHASE 3D: Path to generated reel video
 
 
+class ManualHighlightsRequest(BaseModel):
+    highlights: List[Dict[str, Any]]
+
+
+class LogoUploadResponse(BaseModel):
+    message: str
+    logo_url: str
+
+
+class MusicUploadResponse(BaseModel):
+    message: str
+    music_url: str
+
+
 class ReelCustomizationRequest(BaseModel):
     """
     PHASE 3E: Customization options for reel generation.
     """
     aspect_ratio: str = "landscape"  # Options: landscape, portrait, square
     add_subtitles: bool = True  # Auto-subtitles from Whisper segments
-    # logo_path: Optional[str] = None  # Future: logo upload
+    add_background_music: bool = False  # PHASE B: Apply uploaded campaign BGM
+    bgm_volume: float = 0.2  # PHASE B: Base BGM volume (0-1)
+    ducking_strength: float = 0.35  # PHASE B: Speech-priority mix factor (0-1)
 
 
 # Configuration
 UPLOADS_DIR = Path("uploads")
+LOGOS_DIR = Path("logos")
+MUSIC_DIR = Path("music")
 
 
 def ensure_uploads_directory():
@@ -71,6 +88,47 @@ def ensure_uploads_directory():
     Creates it if not present.
     """
     UPLOADS_DIR.mkdir(exist_ok=True)
+
+
+def ensure_logos_directory():
+    """
+    Ensure logos directory exists.
+    """
+    LOGOS_DIR.mkdir(exist_ok=True)
+
+
+def ensure_music_directory():
+    """
+    Ensure campaign music directory exists.
+    """
+    MUSIC_DIR.mkdir(exist_ok=True)
+
+
+def validate_highlights_payload(highlights: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Validate and normalize manually edited highlights payload.
+    """
+    if not highlights:
+        raise HTTPException(status_code=400, detail="At least one highlight is required")
+
+    normalized: List[Dict[str, Any]] = []
+    for item in highlights:
+        if "start" not in item or "end" not in item:
+            raise HTTPException(status_code=400, detail="Each highlight must include start and end")
+
+        start = float(item["start"])
+        end = float(item["end"])
+        if start < 0 or end <= start:
+            raise HTTPException(status_code=400, detail="Invalid highlight range")
+
+        normalized.append({
+            "text": str(item.get("text", "")).strip(),
+            "start": start,
+            "end": end,
+            "reason": str(item.get("reason", "Manual edit")).strip() or "Manual edit"
+        })
+
+    return normalized
 
 
 def get_campaign_or_404(campaign_id: str, db: Session):
@@ -447,6 +505,192 @@ def generate_highlights(
         )
 
 
+@router.get("/edited-highlights/{campaign_id}", response_model=HighlightExtractionResponse)
+def get_edited_highlights(
+    campaign_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch manually edited highlights if available, otherwise returns AI highlights.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+
+    source = campaign.edited_highlights or campaign.highlights
+    if not source:
+        raise HTTPException(
+            status_code=404,
+            detail="No highlights available"
+        )
+
+    try:
+        data = json.loads(source)
+        highlights = data.get("highlights", [])
+        return HighlightExtractionResponse(
+            message="Edited highlights loaded" if campaign.edited_highlights else "AI highlights loaded",
+            highlight_count=len(highlights),
+            highlights=highlights
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Invalid highlights data: {str(e)}")
+
+
+@router.post("/edited-highlights/{campaign_id}", response_model=HighlightExtractionResponse)
+def save_edited_highlights(
+    campaign_id: str,
+    request: ManualHighlightsRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Save manually edited highlights for a campaign.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+    normalized_highlights = validate_highlights_payload(request.highlights)
+
+    try:
+        payload = {"highlights": normalized_highlights}
+        campaign.edited_highlights = json.dumps(payload)
+        db.commit()
+        db.refresh(campaign)
+
+        return HighlightExtractionResponse(
+            message="Edited highlights saved successfully",
+            highlight_count=len(normalized_highlights),
+            highlights=normalized_highlights
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save edited highlights: {str(e)}")
+
+
+@router.post("/logo/{campaign_id}", response_model=LogoUploadResponse)
+async def upload_campaign_logo(
+    campaign_id: str,
+    logo: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload campaign logo used as watermark in reel generation.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+    ensure_logos_directory()
+
+    allowed_types = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/webp": ".webp"}
+    extension = allowed_types.get((logo.content_type or "").lower())
+    if not extension:
+        raise HTTPException(status_code=400, detail="Unsupported logo format. Use PNG, JPG, or WEBP")
+
+    try:
+        data = await logo.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Logo file is empty")
+
+        logo_path = LOGOS_DIR / f"{campaign_id}{extension}"
+        with open(logo_path, "wb") as file:
+            file.write(data)
+
+        campaign.logo_path = str(logo_path)
+        db.commit()
+        db.refresh(campaign)
+
+        return LogoUploadResponse(
+            message="Logo uploaded successfully",
+            logo_url=f"/record/logo/{campaign_id}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to upload logo: {str(e)}")
+
+
+@router.get("/logo/{campaign_id}")
+def get_campaign_logo(
+    campaign_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Serve campaign logo file.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+
+    if not campaign.logo_path:
+        raise HTTPException(status_code=404, detail="No logo uploaded for this campaign")
+
+    logo_path = Path(campaign.logo_path)
+    if not logo_path.exists():
+        raise HTTPException(status_code=404, detail="Logo file not found")
+
+    return FileResponse(path=logo_path)
+
+
+@router.post("/music/{campaign_id}", response_model=MusicUploadResponse)
+async def upload_campaign_music(
+    campaign_id: str,
+    music: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    PHASE B: Upload campaign background music for reel generation.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+    ensure_music_directory()
+
+    allowed_types = {
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a"
+    }
+    extension = allowed_types.get((music.content_type or "").lower())
+    if not extension:
+        raise HTTPException(status_code=400, detail="Unsupported audio format. Use MP3, WAV, or M4A")
+
+    try:
+        data = await music.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="Music file is empty")
+
+        music_path = MUSIC_DIR / f"{campaign_id}{extension}"
+        with open(music_path, "wb") as file:
+            file.write(data)
+
+        campaign.bgm_path = str(music_path)
+        db.commit()
+        db.refresh(campaign)
+
+        return MusicUploadResponse(
+            message="Background music uploaded successfully",
+            music_url=f"/record/music/{campaign_id}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to upload background music: {str(e)}")
+
+
+@router.get("/music/{campaign_id}")
+def get_campaign_music(
+    campaign_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    PHASE B: Serve campaign background music file.
+    """
+    campaign = get_campaign_or_404(campaign_id, db)
+
+    if not campaign.bgm_path:
+        raise HTTPException(status_code=404, detail="No background music uploaded for this campaign")
+
+    music_path = Path(campaign.bgm_path)
+    if not music_path.exists():
+        raise HTTPException(status_code=404, detail="Background music file not found")
+
+    return FileResponse(path=music_path)
+
+
 @router.post("/generate-reel/{campaign_id}", response_model=ReelGenerationResponse)
 def generate_reel_endpoint(
     campaign_id: str,
@@ -484,16 +728,30 @@ def generate_reel_endpoint(
     # Default options if not provided
     if options is None:
         options = ReelCustomizationRequest()
+
+    options.bgm_volume = max(0.0, min(1.0, options.bgm_volume))
+    options.ducking_strength = max(0.0, min(1.0, options.ducking_strength))
     
     # Validate campaign exists
     campaign = get_campaign_or_404(campaign_id, db)
     
     # Validate highlights exist
-    if not campaign.highlights:
+    if not campaign.highlights and not campaign.edited_highlights:
         raise HTTPException(
             status_code=400,
             detail="No highlights available. Please extract highlights first."
         )
+
+    highlights_source = campaign.edited_highlights or campaign.highlights
+    logo_path = Path(campaign.logo_path) if campaign.logo_path else None
+    if logo_path and not logo_path.exists():
+        logo_path = None
+
+    bgm_path = None
+    if options.add_background_music and campaign.bgm_path:
+        candidate = Path(campaign.bgm_path)
+        if candidate.exists():
+            bgm_path = candidate
     
     # Construct video path
     video_filename = f"{campaign_id}.webm"
@@ -506,11 +764,14 @@ def generate_reel_endpoint(
         
         result = generate_reel(
             campaign_id=campaign_id,
-            highlights_json=campaign.highlights,
+            highlights_json=highlights_source,
             video_path=video_path,
             segments_json=campaign.segments if options.add_subtitles else None,
             aspect_ratio=options.aspect_ratio,
-            logo_path=None  # Future: support logo upload
+            logo_path=logo_path,
+            bgm_path=bgm_path,
+            bgm_volume=options.bgm_volume,
+            ducking_strength=options.ducking_strength
         )
         
         # Optionally store reel path in database

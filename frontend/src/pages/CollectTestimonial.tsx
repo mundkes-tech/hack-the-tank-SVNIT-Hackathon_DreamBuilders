@@ -1,6 +1,14 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { generateHighlights, generateQuestions, getCampaign, generateReel } from '../services/api';
+import {
+  generateHighlights,
+  generateQuestions,
+  getCampaign,
+  generateReel,
+  saveEditedHighlights,
+  uploadCampaignLogo,
+  uploadCampaignMusic,
+} from '../services/api';
 import type { Highlight } from '../services/api';
 import Avatar from '../components/Avatar';
 import './CollectTestimonial.css';
@@ -32,6 +40,7 @@ export default function CollectTestimonial() {
 
   // Speech Synthesis State
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   // Recording & Silence Detection State
   const [isRecording, setIsRecording] = useState(false);
@@ -42,17 +51,40 @@ export default function CollectTestimonial() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [editableHighlights, setEditableHighlights] = useState<Highlight[]>([]);
   const [highlightsLoading, setHighlightsLoading] = useState(false);
   const [highlightsError, setHighlightsError] = useState('');
+  const [isSavingHighlights, setIsSavingHighlights] = useState(false);
+  const [highlightsSaveMessage, setHighlightsSaveMessage] = useState('');
 
   // Reel Generation State (PHASE 3D)
   const [isGeneratingReel, setIsGeneratingReel] = useState(false);
   const [reelPath, setReelPath] = useState('');
   const [reelError, setReelError] = useState('');
+
+  // Phase A Branding State
+  const [selectedLogoFile, setSelectedLogoFile] = useState<File | null>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [logoMessage, setLogoMessage] = useState('');
+  const [logoError, setLogoError] = useState('');
+
+  // Phase B Music State
+  const [selectedMusicFile, setSelectedMusicFile] = useState<File | null>(null);
+  const [isUploadingMusic, setIsUploadingMusic] = useState(false);
+  const [musicMessage, setMusicMessage] = useState('');
+  const [musicError, setMusicError] = useState('');
+  const [addBackgroundMusic, setAddBackgroundMusic] = useState(false);
+  const [bgmVolume, setBgmVolume] = useState(0.2);
+  const [duckingStrength, setDuckingStrength] = useState(0.35);
+  const [callConsentAccepted, setCallConsentAccepted] = useState(false);
   
   // Reel Customization State (PHASE 3E)
-  const [aspectRatio, setAspectRatio] = useState('landscape');
+  const [aspectRatio, setAspectRatio] = useState<'landscape' | 'portrait' | 'square'>('landscape');
   const [addSubtitles, setAddSubtitles] = useState(true);
+  
+  // Permission Error State
+  const [permissionError, setPermissionError] = useState('');
+  const [permissionRetryCount, setPermissionRetryCount] = useState(0);
   
   // Refs for immediate access (not subject to state closure issues)
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -88,6 +120,30 @@ export default function CollectTestimonial() {
     fetchCampaign();
   }, [campaignId]);
 
+  useEffect(() => {
+    if (campaign?.prompt) {
+      document.title = `Collect Testimonial • ${campaign.prompt.slice(0, 40)} • DreamBuilders`;
+      return;
+    }
+    document.title = 'Collect Testimonial • DreamBuilders';
+  }, [campaign]);
+
+  useEffect(() => {
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        setAvailableVoices(voices);
+      }
+    };
+
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
+
   // Handle "Start Testimonial" click
   const handleStartTestimonial = async () => {
     if (!campaignId) return;
@@ -98,8 +154,10 @@ export default function CollectTestimonial() {
     setIsUploading(false);
     setUploadError('');
     setHighlights([]);
+    setEditableHighlights([]);
     setHighlightsLoading(false);
     setHighlightsError('');
+    setHighlightsSaveMessage('');
     setVideoBlob(null);
 
     try {
@@ -118,6 +176,7 @@ export default function CollectTestimonial() {
 
   // Handle "Begin Interview" click
   const handleBeginInterview = () => {
+    if (!callConsentAccepted) return;
     setIsCompleted(false);
     setIsInterviewStarted(true);
   };
@@ -128,6 +187,18 @@ export default function CollectTestimonial() {
    */
   const getLanguageCode = (): string => {
     return selectedLanguage === 'hindi' ? 'hi-IN' : 'en-US';
+  };
+
+  const pickBestVoice = (voices: SpeechSynthesisVoice[], lang: string) => {
+    const normalizedLang = lang.toLowerCase();
+    const matching = voices.filter((voice) => voice.lang.toLowerCase().startsWith(normalizedLang));
+    if (matching.length === 0) return undefined;
+
+    const preferred = matching.find((voice) =>
+      /google|microsoft|neural|natural|premium/i.test(voice.name)
+    );
+
+    return preferred || matching[0];
   };
 
   const formatTimestamp = (seconds: number): string => {
@@ -159,9 +230,14 @@ export default function CollectTestimonial() {
     // Create speech utterance
     const utterance = new SpeechSynthesisUtterance(currentQuestion);
     utterance.lang = getLanguageCode();
-    utterance.rate = 0.95; // Slightly slower for clarity
-    utterance.pitch = 1.0;
+    utterance.rate = 0.92;
+    utterance.pitch = 0.98;
     utterance.volume = 1.0;
+
+    const selectedVoice = pickBestVoice(availableVoices, utterance.lang);
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
 
     // Track speaking state
     utterance.onstart = () => {
@@ -275,7 +351,9 @@ export default function CollectTestimonial() {
 
       try {
         const highlightsResult = await generateHighlights(campaignId);
-        setHighlights(highlightsResult.highlights || []);
+        const generatedHighlights = highlightsResult.highlights || [];
+        setHighlights(generatedHighlights);
+        setEditableHighlights(generatedHighlights);
       } catch (highlightErr) {
         const message = highlightErr instanceof Error
           ? highlightErr.message
@@ -306,10 +384,17 @@ export default function CollectTestimonial() {
       console.log('[REEL] Starting reel generation with options:', { aspectRatio, addSubtitles });
       setIsGeneratingReel(true);
       setReelError('');
+
+      if (editableHighlights.length > 0) {
+        await saveEditedHighlights(campaignId, editableHighlights);
+      }
       
       const response = await generateReel(campaignId, {
         aspect_ratio: aspectRatio,
-        add_subtitles: addSubtitles
+        add_subtitles: addSubtitles,
+        add_background_music: addBackgroundMusic,
+        bgm_volume: bgmVolume,
+        ducking_strength: duckingStrength
       });
       
       console.log('[REEL] Reel generated successfully:', response);
@@ -321,6 +406,113 @@ export default function CollectTestimonial() {
       setReelError(errorMsg);
     } finally {
       setIsGeneratingReel(false);
+    }
+  };
+
+  const handleHighlightTimeChange = (index: number, field: 'start' | 'end', value: string) => {
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) return;
+
+    setHighlightsSaveMessage('');
+    setEditableHighlights((prev) => prev.map((highlight, idx) => {
+      if (idx !== index) return highlight;
+      return {
+        ...highlight,
+        [field]: Math.max(0, parsedValue)
+      };
+    }));
+  };
+
+  const moveHighlight = (index: number, direction: 'up' | 'down') => {
+    setHighlightsSaveMessage('');
+    setEditableHighlights((prev) => {
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= prev.length) return prev;
+      const clone = [...prev];
+      [clone[index], clone[target]] = [clone[target], clone[index]];
+      return clone;
+    });
+  };
+
+  const removeHighlight = (index: number) => {
+    setHighlightsSaveMessage('');
+    setEditableHighlights((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const addHighlight = () => {
+    setHighlightsSaveMessage('');
+    const lastEnd = editableHighlights.length > 0
+      ? editableHighlights[editableHighlights.length - 1].end
+      : 0;
+
+    setEditableHighlights((prev) => ([
+      ...prev,
+      {
+        text: 'Manual clip',
+        start: lastEnd,
+        end: lastEnd + 4,
+        reason: 'Added manually'
+      }
+    ]));
+  };
+
+  const handleSaveEditedHighlights = async () => {
+    if (!campaignId || editableHighlights.length === 0) {
+      setHighlightsError('Add at least one clip before saving edits.');
+      return;
+    }
+
+    const invalidClip = editableHighlights.find((clip) => clip.end <= clip.start);
+    if (invalidClip) {
+      setHighlightsError('Each clip must have end time greater than start time.');
+      return;
+    }
+
+    try {
+      setIsSavingHighlights(true);
+      setHighlightsError('');
+      const response = await saveEditedHighlights(campaignId, editableHighlights);
+      setEditableHighlights(response.highlights || []);
+      setHighlightsSaveMessage('✅ Clip edits saved. Reel will use this order and timing.');
+    } catch (err) {
+      setHighlightsError(err instanceof Error ? err.message : 'Failed to save edited highlights');
+    } finally {
+      setIsSavingHighlights(false);
+    }
+  };
+
+  const handleLogoUpload = async () => {
+    if (!campaignId || !selectedLogoFile) return;
+
+    try {
+      setIsUploadingLogo(true);
+      setLogoError('');
+      setLogoMessage('');
+      const result = await uploadCampaignLogo(campaignId, selectedLogoFile);
+      setLogoMessage(`✅ ${result.message}`);
+      setSelectedLogoFile(null);
+    } catch (err) {
+      setLogoError(err instanceof Error ? err.message : 'Failed to upload logo');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleMusicUpload = async () => {
+    if (!campaignId || !selectedMusicFile) return;
+
+    try {
+      setIsUploadingMusic(true);
+      setMusicError('');
+      setMusicMessage('');
+      const result = await uploadCampaignMusic(campaignId, selectedMusicFile);
+      setMusicMessage(`✅ ${result.message}`);
+      setSelectedMusicFile(null);
+      setAddBackgroundMusic(true);
+    } catch (err) {
+      setMusicError(err instanceof Error ? err.message : 'Failed to upload background music');
+    } finally {
+      setIsUploadingMusic(false);
     }
   };
 
@@ -425,10 +617,32 @@ export default function CollectTestimonial() {
       analyserRef.current = analyserNode;
     } catch (err) {
       console.error('[RECORDING] Failed to start recording:', err);
-      alert('Camera/microphone access denied. Please allow access to continue.');
-      // Allow interview to continue without recording
+      
+      // Handle different permission errors
+      let errorMsg = 'Camera/microphone access denied';
+      if (err instanceof DOMException) {
+        if (err.name === 'NotAllowedError') {
+          errorMsg = 'Permission denied. Please check browser settings and click "Allow" for camera & microphone.';
+        } else if (err.name === 'NotFoundError') {
+          errorMsg = 'No camera/microphone found. Please check your device.';
+        } else if (err.name === 'NotReadableError') {
+          errorMsg = 'Camera/microphone is in use by another application. Please close other apps.';
+        }
+      }
+      
+      setPermissionError(errorMsg);
+      setPermissionRetryCount(prev => prev + 1);
       setIsRecording(false);
     }
+  };
+
+  /**
+   * Retry camera/microphone permission after user fixes browser settings
+   */
+  const retryPermission = async () => {
+    console.log('[PERMISSION] Retrying camera/microphone access...');
+    setPermissionError('');
+    await startRecording();
   };
 
   /**
@@ -638,7 +852,7 @@ export default function CollectTestimonial() {
       <div className="container">
         <div className="card results-card">
           <h1>Thanks for sharing your testimonial!</h1>
-          <p className="subtitle">We are processing your video and extracting highlights.</p>
+          <p className="subtitle">Your review has been captured. We’re now extracting the best moments.</p>
 
           <div className="result-status">
             {isUploading && (
@@ -674,6 +888,139 @@ export default function CollectTestimonial() {
             ))}
           </div>
 
+          {!highlightsLoading && !highlightsError && editableHighlights.length > 0 && (
+            <div className="highlights-section">
+              <h2>Manual Clip Editor</h2>
+              <p className="muted">Adjust start/end, reorder clips, remove clips, or add a new one.</p>
+
+              {editableHighlights.map((clip, index) => (
+                <div className="highlight-item" key={`editable-${index}-${clip.start}-${clip.end}`}>
+                  <div className="highlight-meta">Editable Clip {index + 1}</div>
+                  <div className="clip-editor-row">
+                    <label>
+                      Start (sec)
+                      <input
+                        className="clip-input"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={Number.isFinite(clip.start) ? clip.start : 0}
+                        onChange={(e) => handleHighlightTimeChange(index, 'start', e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      End (sec)
+                      <input
+                        className="clip-input"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={Number.isFinite(clip.end) ? clip.end : 0}
+                        onChange={(e) => handleHighlightTimeChange(index, 'end', e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="clip-editor-actions">
+                    <button className="btn-secondary" onClick={() => moveHighlight(index, 'up')} disabled={index === 0}>↑ Move Up</button>
+                    <button className="btn-secondary" onClick={() => moveHighlight(index, 'down')} disabled={index === editableHighlights.length - 1}>↓ Move Down</button>
+                    <button className="btn-secondary" onClick={() => removeHighlight(index)}>🗑 Remove</button>
+                  </div>
+                </div>
+              ))}
+
+              <div className="clip-editor-actions" style={{ marginTop: '10px' }}>
+                <button className="btn-secondary" onClick={addHighlight}>+ Add Clip</button>
+                <button className="btn-primary" onClick={handleSaveEditedHighlights} disabled={isSavingHighlights}>
+                  {isSavingHighlights ? 'Saving...' : '💾 Save Clip Edits'}
+                </button>
+              </div>
+              {highlightsSaveMessage && <p className="muted">{highlightsSaveMessage}</p>}
+            </div>
+          )}
+
+          <div className="highlights-section">
+            <h2>Branding</h2>
+            <p className="muted">Upload a PNG/JPG/WEBP logo. It will be used in the generated reel.</p>
+            <div className="asset-upload-row">
+              <input
+                className="asset-file-input"
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp"
+                onChange={(e) => setSelectedLogoFile(e.target.files?.[0] || null)}
+              />
+              <button
+                className="btn-primary asset-upload-btn"
+                onClick={handleLogoUpload}
+                disabled={!selectedLogoFile || isUploadingLogo}
+              >
+                {isUploadingLogo ? 'Uploading...' : 'Upload Logo'}
+              </button>
+            </div>
+            {logoMessage && <p className="muted">{logoMessage}</p>}
+            {logoError && <div className="error-message">{logoError}</div>}
+          </div>
+
+          <div className="highlights-section">
+            <h2>Background Music</h2>
+            <p className="muted">Upload MP3/WAV/M4A and enable speech-priority ducking mix.</p>
+            <div className="asset-upload-row">
+              <input
+                className="asset-file-input"
+                type="file"
+                accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a"
+                onChange={(e) => setSelectedMusicFile(e.target.files?.[0] || null)}
+              />
+              <button
+                className="btn-primary asset-upload-btn"
+                onClick={handleMusicUpload}
+                disabled={!selectedMusicFile || isUploadingMusic}
+              >
+                {isUploadingMusic ? 'Uploading...' : 'Upload Music'}
+              </button>
+            </div>
+
+            <div className="music-toggle-row">
+              <label className="music-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={addBackgroundMusic}
+                  onChange={(e) => setAddBackgroundMusic(e.target.checked)}
+                />
+                <span>Enable background music in generated reel</span>
+              </label>
+            </div>
+
+            <div className="music-sliders-row">
+              <label>
+                Music Volume ({bgmVolume.toFixed(2)})
+                <input
+                  className="clip-input"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={bgmVolume}
+                  onChange={(e) => setBgmVolume(Number(e.target.value))}
+                />
+              </label>
+              <label>
+                Ducking Strength ({duckingStrength.toFixed(2)})
+                <input
+                  className="clip-input"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={duckingStrength}
+                  onChange={(e) => setDuckingStrength(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            {musicMessage && <p className="muted">{musicMessage}</p>}
+            {musicError && <div className="error-message">{musicError}</div>}
+          </div>
+
           {/* PHASE 3D: Reel preview section */}
           {reelPath && (
             <div className="reel-preview-section">
@@ -685,8 +1032,7 @@ export default function CollectTestimonial() {
               <a 
                 href={`http://127.0.0.1:8001/record/reel/${campaignId}`} 
                 download 
-                className="btn-primary"
-                style={{ display: 'inline-block', marginBottom: '20px', padding: '12px 24px' }}
+                className="btn-primary reel-download-link"
               >
                 📥 Download Reel
               </a>
@@ -701,24 +1047,17 @@ export default function CollectTestimonial() {
           <div className="result-actions"
               >
             {/* PHASE 3E: Reel customization options */}
-            {!reelPath && highlights.length > 0 && (
-              <div style={{ marginBottom: '20px', textAlign: 'left' }}>
-                <div style={{ marginBottom: '10px' }}>
-                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+            {editableHighlights.length > 0 && (
+              <div className="reel-options-card">
+                <div className="reel-field">
+                  <label className="reel-field-label">
                     Aspect Ratio:
                   </label>
                   <select 
+                    className="reel-select"
                     value={aspectRatio} 
-                    onChange={(e) => setAspectRatio(e.target.value)}
+                    onChange={(e) => setAspectRatio(e.target.value as 'landscape' | 'portrait' | 'square')}
                     disabled={isGeneratingReel}
-                    style={{ 
-                      padding: '8px 12px', 
-                      fontSize: '14px', 
-                      borderRadius: '5px', 
-                      border: '1px solid #ccc',
-                      width: '100%',
-                      maxWidth: '300px'
-                    }}
                   >
                     <option value="landscape">Landscape (16:9) - YouTube</option>
                     <option value="portrait">Portrait (9:16) - TikTok/Reels</option>
@@ -726,14 +1065,13 @@ export default function CollectTestimonial() {
                   </select>
                 </div>
                 
-                <div style={{ marginBottom: '15px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                <div className="reel-field">
+                  <label className="reel-toggle-label">
                     <input 
                       type="checkbox" 
                       checked={addSubtitles} 
                       onChange={(e) => setAddSubtitles(e.target.checked)}
                       disabled={isGeneratingReel}
-                      style={{ marginRight: '8px', cursor: 'pointer' }}
                     />
                     <span>Add auto-generated subtitles</span>
                   </label>
@@ -742,39 +1080,52 @@ export default function CollectTestimonial() {
             )}
             
             {/* PHASE 3D: Reel generation button */}
-            {!reelPath && highlights.length > 0 && (
+            {editableHighlights.length > 0 && (
               <button
-                className="btn-highlight"
+                className="btn-highlight result-generate"
                 onClick={handleGenerateReel}
                 disabled={isGeneratingReel}
-                style={{ marginRight: '10px' }}
               >
-                {isGeneratingReel ? '🔄 Generating Reel...' : '🎬 Generate Final Reel'}
+                {isGeneratingReel
+                  ? 'Generating Reel...'
+                  : (reelPath ? 'Regenerate Final Reel' : 'Generate Final Reel')}
               </button>
             )}
             
             <button
-              className="btn-secondary"
+              className="btn-secondary result-back"
               onClick={() => navigate('/')}
             >
               Back to Home
             </button>
             <button
-              className="btn-primary"
+              className="btn-primary result-record"
               onClick={() => {
                 setIsCompleted(false);
                 setIsPrepared(false);
                 setQuestions([]);
                 setCurrentQuestionIndex(0);
                 setHighlights([]);
+                setEditableHighlights([]);
                 setUploadError('');
                 setHighlightsError('');
+                setHighlightsSaveMessage('');
                 setIsUploading(false);
                 setHighlightsLoading(false);
                 setVideoBlob(null);
                 setReelPath('');
                 setReelError('');
                 setIsGeneratingReel(false);
+                setSelectedLogoFile(null);
+                setLogoMessage('');
+                setLogoError('');
+                setSelectedMusicFile(null);
+                setMusicMessage('');
+                setMusicError('');
+                setAddBackgroundMusic(false);
+                setBgmVolume(0.2);
+                setDuckingStrength(0.35);
+                setCallConsentAccepted(false);
               }}
             >
               Record Another
@@ -802,10 +1153,16 @@ export default function CollectTestimonial() {
             </div>
           </div>
 
+          <div className="onboarding-strip" aria-label="Trust indicators">
+            <span>🔐 Secure capture flow</span>
+            <span>🧠 Guided feedback call</span>
+            <span>🎯 Highlight-first output</span>
+          </div>
+
           <div className="setup-section">
             <h2>Let's Get Started</h2>
             <p className="setup-description">
-              We'll use AI to guide you through a short set of questions. Choose your preferred language and begin.
+              We'll connect you to a guided feedback/review call flow. Choose your preferred language and start when ready.
             </p>
 
             <div className="language-selector">
@@ -828,8 +1185,35 @@ export default function CollectTestimonial() {
               disabled={loading}
               className="btn-primary btn-large"
             >
-              {loading ? 'Loading Questions...' : 'Start Testimonial'}
+              {loading ? 'Preparing Call...' : 'Start Feedback Call'}
             </button>
+          </div>
+
+          <div className="experience-grid" aria-label="What respondents can expect">
+            <div className="experience-card">
+              <h4>What happens next</h4>
+              <ul>
+                <li>The system asks 3-5 short guided prompts.</li>
+                <li>You respond naturally in your own words.</li>
+                <li>Best moments are transformed into share-ready clips.</li>
+              </ul>
+            </div>
+            <div className="experience-card">
+              <h4>Tips for best testimonial quality</h4>
+              <ul>
+                <li>Share one specific before/after result.</li>
+                <li>Mention what changed and why it mattered.</li>
+                <li>Use clear examples (time saved, quality, trust).</li>
+              </ul>
+            </div>
+            <div className="experience-card secure">
+              <h4>Privacy & trust</h4>
+              <ul>
+                <li>Your recording stays tied to this campaign only.</li>
+                <li>Content is processed for transcription and highlight extraction.</li>
+                <li>Final clips can be reviewed before publishing.</li>
+              </ul>
+            </div>
           </div>
 
           <div className="campaign-details">
@@ -851,8 +1235,8 @@ export default function CollectTestimonial() {
       <div className="container">
         <div className="card loading-card">
           <div className="spinner-large"></div>
-          <h2>AI is preparing your personalized questions...</h2>
-          <p>Just a moment while we set up your interview.</p>
+          <h2>Preparing your feedback call prompts...</h2>
+          <p>Just a moment while we connect your review call flow.</p>
         </div>
       </div>
     );
@@ -863,22 +1247,51 @@ export default function CollectTestimonial() {
     return (
       <div className="container">
         <div className="card ready-card">
-          <div className="ready-icon">🤖</div>
-          <h1>Your AI Host is Ready</h1>
+          <div className="ready-kicker">Customer Feedback Call</div>
+          <div className="ready-icon">🎤</div>
+          <h1>Your Feedback Call is Ready</h1>
           <p className="ready-subtitle">
-            Click begin to start your testimonial interview.
+            You are about to join a guided feedback/review call for <strong>{campaign.prompt}</strong>. Please answer thoughtfully like a real customer conversation.
           </p>
 
           <div className="prepare-info">
-            <p className="info-text">Language: <strong>{selectedLanguage === 'english' ? 'English' : 'हिन्दी'}</strong></p>
-            <p className="info-text">Questions: <strong>{questions.length}</strong></p>
+            <p className="info-text">Call Language: <strong>{selectedLanguage === 'english' ? 'English' : 'हिन्दी'}</strong></p>
+            <p className="info-text">Call Purpose: <strong>Service feedback and product experience review</strong></p>
+            <p className="info-text">Review Audience: <strong>Customer Experience Team</strong></p>
           </div>
+
+          <div className="response-guidance">
+            <h3>For strongest answers</h3>
+            <ul>
+              <li>Mention a specific before/after change.</li>
+              <li>Share one concrete example (time, quality, confidence, results).</li>
+              <li>Speak naturally as if advising another customer.</li>
+            </ul>
+          </div>
+
+          <div className="trust-note">
+            <span>🔒 Secure recording</span>
+            <span>🧠 Guided call format</span>
+            <span>✅ Human-review friendly output</span>
+          </div>
+
+          <label className="call-consent-row">
+            <input
+              type="checkbox"
+              checked={callConsentAccepted}
+              onChange={(e) => setCallConsentAccepted(e.target.checked)}
+            />
+            <span>
+              I understand this feedback call will be reviewed for service quality and I will provide genuine responses.
+            </span>
+          </label>
 
           <button
             onClick={handleBeginInterview}
             className="btn-primary btn-large"
+            disabled={!callConsentAccepted}
           >
-            Begin Interview
+            Join Feedback Call
           </button>
 
           <button
@@ -892,6 +1305,7 @@ export default function CollectTestimonial() {
               setHighlightsError('');
               setIsUploading(false);
               setHighlightsLoading(false);
+              setCallConsentAccepted(false);
             }}
             className="btn-secondary"
           >
@@ -921,41 +1335,121 @@ export default function CollectTestimonial() {
               ></div>
             </div>
             <p className="progress-text">
-              Question {questionNumber} of {totalQuestions}
+              Feedback call in progress
             </p>
+
+            <div className="call-status-row">
+              <span className="call-status-chip">🔐 Secure connection</span>
+              <span className="call-status-chip">🧾 Review call mode</span>
+              <span className="call-status-chip">🎙 {isSpeaking ? 'Host speaking' : 'Listening to customer'}</span>
+            </div>
             
             {/* Recording indicator */}
             {isRecording && (
               <div className="recording-indicator">
                 <span className="recording-dot"></span>
-                <span className="recording-text">RECORDING</span>
+                <span className="recording-text">LIVE CALL</span>
               </div>
             )}
           </div>
 
-          {/* Avatar section - center focus */}
-          <Avatar isSpeaking={isSpeaking} />
-
-          {/* Video preview - camera feed while recording */}
-          {isRecording && mediaStream && (
-            <video
-              autoPlay
-              muted
-              className="video-preview"
-              ref={(video) => {
-                if (video && !video.srcObject) {
-                  video.srcObject = mediaStream;
-                }
-              }}
-            ></video>
-          )}
-
-          {/* Subtle caption at bottom while speaking */}
-          {isSpeaking && (
-            <div className="speaking-caption">
-              <p>{currentQuestion}</p>
+          {/* PERMISSION ERROR MESSAGE */}
+          {permissionError && (
+            <div style={{
+              backgroundColor: '#FEE2E2',
+              border: '2px solid #DC2626',
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ color: '#991B1B', fontWeight: 'bold', marginBottom: '8px' }}>
+                🔒 Camera/Microphone Access Required
+              </div>
+              <div style={{ color: '#7C2D12', marginBottom: '12px', fontSize: '14px' }}>
+                {permissionError}
+              </div>
+              <div style={{ color: '#7C2D12', marginBottom: '8px', fontSize: '12px' }}>
+                Retry attempts: {permissionRetryCount}
+              </div>
+              <div style={{ marginBottom: '12px', fontSize: '13px', color: '#7C2D12' }}>
+                <strong>How to fix:</strong>
+                <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                  <li>Refresh the page (<code style={{ backgroundColor: '#FECACA', padding: '2px 6px', borderRadius: '3px' }}>Ctrl + R</code>)</li>
+                  <li>Click &quot;Allow&quot; when your browser asks for permissions</li>
+                  <li>Check browser settings: Settings → Privacy → Camera & Microphone → Allow this site</li>
+                  <li>Close any other apps using your camera (Zoom, Teams, etc.)</li>
+                </ul>
+              </div>
+              <button
+                onClick={retryPermission}
+                disabled={isRecording}
+                style={{
+                  backgroundColor: '#DC2626',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  marginRight: '10px'
+                }}
+              >
+                🔄 Retry Permission
+              </button>
+              <button
+                onClick={() => {
+                  setIsInterviewStarted(false);
+                  setPermissionError('');
+                  setPermissionRetryCount(0);
+                }}
+                style={{
+                  backgroundColor: '#6B7280',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ← Back to Setup
+              </button>
             </div>
           )}
+
+          <div className="call-prompt-panel" role="status" aria-live="polite">
+            <div className="call-prompt-label">Host Question</div>
+            <p>{currentQuestion}</p>
+          </div>
+
+          <div className="call-media-grid">
+            <div className="call-host-card">
+              <div className="media-card-title">Host Guidance</div>
+              <Avatar isSpeaking={isSpeaking} />
+            </div>
+
+            <div className="call-customer-card">
+              <div className="media-card-title">Your Camera Preview</div>
+              {/* Video preview - camera feed while recording */}
+              {isRecording && mediaStream && (
+                <video
+                  autoPlay
+                  muted
+                  className="video-preview"
+                  ref={(video) => {
+                    if (video && !video.srcObject) {
+                      video.srcObject = mediaStream;
+                    }
+                  }}
+                ></video>
+              )}
+              {(!isRecording || !mediaStream) && (
+                <div className="camera-waiting">Camera will appear once recording starts.</div>
+              )}
+            </div>
+          </div>
 
           {/* Navigation and control buttons - MINIMAL */}
           <div className="interview-controls">
@@ -998,7 +1492,7 @@ export default function CollectTestimonial() {
           {/* Help text */}
           <div className="interview-footer">
             <p className="help-text">
-              � Your response is being recorded. Silence for 2 seconds will automatically advance to the next question.
+              Your response is being recorded for this guided feedback call. A 2-second pause automatically moves to the next prompt.
             </p>
           </div>
         </div>
