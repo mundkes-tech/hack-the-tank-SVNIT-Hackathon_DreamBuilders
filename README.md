@@ -10,16 +10,19 @@ A full-stack web application that transforms raw video testimonials into polishe
 
 ### 📹 **Smart Interview System**
 - **AI-Powered Question Generation**: Uses Groq's LLM (llama-3.3-70b-versatile) to generate 3-5 contextual questions based on campaign prompt
-- **Multi-Language Support**: Interview questions available in English, Urdu, and more
-- **Text-to-Speech**: Questions read aloud to interviewees with natural voice synthesis
+- **Multi-Language Support**: Interview questions available in English and Hindi
+- **Text-to-Speech**: Questions read aloud to interviewees with natural browser voice synthesis
+- **Voice Preference**: Auto-selects the most natural available system voice on each device
 - **Real-Time Recording**: WebM video capture with live silence detection
 - **Automatic Upload**: Seamless WebM → Backend processing pipeline
+- **Host Avatar UI**: Friendly human-style avatar to guide the feedback call
 
 ### 🎯 **Intelligent Highlight Extraction**
 - **AI-Powered Highlight Detection**: Groq LLM analyzes complete transcripts to identify emotional moments, problem-solution statements, and strong recommendations
 - **Automatic Timestamps**: Extracts precise start/end timestamps for each highlight
 - **Contextual Clipping**: 3-5 key moments automatically identified per testimonial
 - **Transcript Visualization**: Full transcript display with highlight mapping
+- **Manual Clip Editor**: Adjust clip start/end, reorder, remove, or add custom clips
 
 ### 🎙️ **Professional Audio Processing**
 - **Automatic Transcription**: OpenAI Whisper (base model, 74MB, CPU-optimized) converts audio to text
@@ -34,7 +37,9 @@ A full-stack web application that transforms raw video testimonials into polishe
   - 📺 **Landscape (16:9)** - YouTube, Main platforms
   - 📱 **Portrait (9:16)** - TikTok, Instagram Reels, YouTube Shorts
   - 📸 **Square (1:1)** - Instagram Feed, LinkedIn
-- **Logo Watermark** (Backend ready): Brand watermark overlay at bottom-right
+- **Logo Watermark**: Brand watermark overlay at bottom-right
+- **Background Music Mix**: Optional campaign BGM with speech-priority ducking
+- **Regenerate Anytime**: Update logo, music, subtitles, or clip edits and re-render
 - **Professional Styling**: White text with black stroke, perfectly centered captions
 
 ### 💾 **Campaign Management**
@@ -209,6 +214,8 @@ htt_DreamBuilderss/
 │   │   └── reel_generator.py    # MoviePy video editing (Phase 3E)
 │   │
 │   ├── 📂 uploads/              # User-uploaded WebM videos
+│   ├── 📂 logos/                # Campaign watermark uploads
+│   ├── 📂 music/                # Campaign background music uploads
 │   ├── 📂 outputs/              # Generated MP4 reels
 │   └── testimonials.db          # SQLite database
 │
@@ -303,6 +310,12 @@ GET    /campaigns/{id}      # Get campaign details
 POST   /record/upload/{campaign_id}                    # Upload video
 GET    /record/transcript/{campaign_id}                # Get transcript
 POST   /record/extract-highlights/{campaign_id}        # Extract highlights
+GET    /record/edited-highlights/{campaign_id}         # Load edited highlights
+POST   /record/edited-highlights/{campaign_id}         # Save edited highlights
+POST   /record/logo/{campaign_id}                      # Upload logo watermark
+GET    /record/logo/{campaign_id}                      # Fetch logo watermark
+POST   /record/music/{campaign_id}                     # Upload background music
+GET    /record/music/{campaign_id}                     # Fetch background music
 POST   /record/generate-reel/{campaign_id}            # Generate reel with options
 GET    /record/reel/{campaign_id}                      # Download reel (MP4)
 ```
@@ -344,7 +357,10 @@ GET    /record/reel/{campaign_id}                      # Download reel (MP4)
 ### ✅ **Phase 3E: Professional Customization**
 - Auto-subtitle generation
 - Multi-aspect ratio support (16:9, 9:16, 1:1)
-- Logo watermark (backend ready)
+- Logo watermark
+- Background music with ducking controls
+- Manual highlight editing and re-ordering
+- Regenerate reels with updated settings
 - Platform-specific optimization
 
 ---
