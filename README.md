@@ -296,29 +296,125 @@ npm run build
 
 ---
 
-## 🔌 API Endpoints
+## 🔌 API Documentation
 
-### **Campaign Routes**
-```
-GET    /campaigns           # List all campaigns
-POST   /campaigns           # Create campaign
-GET    /campaigns/{id}      # Get campaign details
+Base URL: `http://127.0.0.1:8001`
+
+Interactive API docs:
+- Swagger UI: `http://127.0.0.1:8001/docs`
+- ReDoc: `http://127.0.0.1:8001/redoc`
+
+### **Health**
+```http
+GET /
+GET /health
 ```
 
-### **Recording Routes**
+### **Campaign**
+```http
+POST /campaign/create
+GET  /campaign/{campaign_id}
+POST /campaign/{campaign_id}/generate-questions
 ```
-POST   /record/upload/{campaign_id}                    # Upload video
-GET    /record/transcript/{campaign_id}                # Get transcript
-POST   /record/extract-highlights/{campaign_id}        # Extract highlights
-GET    /record/edited-highlights/{campaign_id}         # Load edited highlights
-POST   /record/edited-highlights/{campaign_id}         # Save edited highlights
-POST   /record/logo/{campaign_id}                      # Upload logo watermark
-GET    /record/logo/{campaign_id}                      # Fetch logo watermark
-POST   /record/music/{campaign_id}                     # Upload background music
-GET    /record/music/{campaign_id}                     # Fetch background music
-POST   /record/generate-reel/{campaign_id}            # Generate reel with options
-GET    /record/reel/{campaign_id}                      # Download reel (MP4)
+
+`POST /campaign/create`
+- Request body:
+```json
+{
+    "prompt": "Collect a customer success testimonial for our SaaS onboarding experience"
+}
 ```
+- Response:
+```json
+{
+    "campaign_id": "uuid",
+    "shareable_link": "http://localhost:5173/collect/{campaign_id}",
+    "prompt": "...",
+    "created_at": "2026-03-06T10:00:00.000000"
+}
+```
+
+`POST /campaign/{campaign_id}/generate-questions`
+- Request body:
+```json
+{
+    "language": "english"
+}
+```
+- Allowed values: `english`, `hindi`
+
+### **Recording And Reel**
+```http
+POST /record/upload/{campaign_id}
+POST /record/highlights/{campaign_id}
+GET  /record/edited-highlights/{campaign_id}
+POST /record/edited-highlights/{campaign_id}
+POST /record/logo/{campaign_id}
+GET  /record/logo/{campaign_id}
+POST /record/music/{campaign_id}
+GET  /record/music/{campaign_id}
+POST /record/generate-reel/{campaign_id}
+GET  /record/reel/{campaign_id}
+```
+
+`POST /record/upload/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `video` (WebM file)
+- Response contains:
+- `message`
+- `transcript`
+- `segment_count`
+
+`POST /record/highlights/{campaign_id}`
+- Generates 3-5 AI highlights from transcript segments.
+- Response contains `highlight_count` and `highlights`.
+
+`POST /record/edited-highlights/{campaign_id}`
+- Request body:
+```json
+{
+    "highlights": [
+        {
+            "text": "Customer described measurable impact",
+            "start": 12.4,
+            "end": 21.8,
+            "reason": "Manual edit"
+        }
+    ]
+}
+```
+
+`POST /record/logo/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `logo`
+- Supported: `png`, `jpg`, `webp`
+
+`POST /record/music/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `music`
+- Supported: `mp3`, `wav`, `m4a`
+
+`POST /record/generate-reel/{campaign_id}`
+- Request body:
+```json
+{
+    "aspect_ratio": "landscape",
+    "add_subtitles": true,
+    "add_background_music": false,
+    "bgm_volume": 0.2,
+    "ducking_strength": 0.35
+}
+```
+- `aspect_ratio` values: `landscape`, `portrait`, `square`
+- Response contains `reel_path`
+
+`GET /record/reel/{campaign_id}`
+- Returns generated MP4 as file download.
+
+### **Common Error Codes**
+- `400`: invalid request (empty upload, invalid language, invalid highlight range)
+- `404`: campaign/resource not found
+- `500`: media processing or AI service failure
 
 ---
 

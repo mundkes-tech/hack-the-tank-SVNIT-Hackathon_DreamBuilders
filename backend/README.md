@@ -1,83 +1,141 @@
 # Backend - AI Testimonial Collection System
 
-## Phase 1: Campaign + Link System
+FastAPI backend for campaign creation, question generation, video upload/transcription, highlight extraction, and final reel generation.
 
-This is the backend for the AI-Native Autonomous Testimonial Collection System.
+## Quick Start
 
-### Setup Instructions
-
-1. **Create a virtual environment:**
+1. Create and activate virtual environment:
 ```bash
-python -m venv venv
-```
+python -m venv .venv
 
-2. **Activate the virtual environment:**
-```bash
-# Windows
-venv\Scripts\activate
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
 
 # Mac/Linux
-source venv/bin/activate
+source .venv/bin/activate
 ```
 
-3. **Install dependencies:**
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Run the server:**
+3. Create environment file:
+```bash
+copy .env.example .env
+```
+
+4. Set your Groq key in `.env`:
+```env
+GROQ_API_KEY=your_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+```
+
+5. Run server:
 ```bash
 python main.py
 ```
 
-Or use uvicorn directly:
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+Server base URL: `http://127.0.0.1:8001`
+
+## API Docs
+
+- Swagger UI: `http://127.0.0.1:8001/docs`
+- ReDoc: `http://127.0.0.1:8001/redoc`
+
+## Endpoints
+
+### Health
+- `GET /`
+- `GET /health`
+
+### Campaign
+- `POST /campaign/create`
+- `GET /campaign/{campaign_id}`
+- `POST /campaign/{campaign_id}/generate-questions`
+
+`POST /campaign/create`
+```json
+{
+  "prompt": "Collect testimonial for our onboarding and support experience"
+}
 ```
 
-### API Endpoints
-
-#### Health Check
-- `GET /` - Root endpoint with system info
-- `GET /health` - Health check
-
-#### Campaign Management
-- `POST /campaign/create` - Create a new testimonial campaign
-  - Request: `{ "prompt": "Collect testimonial for my pizza restaurant" }`
-  - Response: Campaign ID and shareable link
-
-- `GET /campaign/{campaign_id}` - Retrieve campaign details
-  - Response: Campaign ID, prompt, and creation timestamp
-
-### Project Structure
-
-```
-backend/
-├── main.py          # FastAPI app entry point
-├── database.py      # Database configuration
-├── models.py        # SQLAlchemy models
-├── routes/
-│   ├── __init__.py
-│   └── campaign.py  # Campaign endpoints
-└── requirements.txt # Python dependencies
+`POST /campaign/{campaign_id}/generate-questions`
+```json
+{
+  "language": "english"
+}
 ```
 
-### Database
+Supported language values: `english`, `hindi`
 
-- SQLite database stored as `testimonials.db`
-- Automatically initialized on startup
-- Campaign table with id, prompt, and created_at fields
+### Record
+- `POST /record/upload/{campaign_id}`
+- `POST /record/highlights/{campaign_id}`
+- `GET /record/edited-highlights/{campaign_id}`
+- `POST /record/edited-highlights/{campaign_id}`
+- `POST /record/logo/{campaign_id}`
+- `GET /record/logo/{campaign_id}`
+- `POST /record/music/{campaign_id}`
+- `GET /record/music/{campaign_id}`
+- `POST /record/generate-reel/{campaign_id}`
+- `GET /record/reel/{campaign_id}`
 
-### Testing
+`POST /record/upload/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `video` (`.webm`)
+- Returns transcript text and segment count.
 
-You can test the API using:
-- FastAPI automatic docs at `http://localhost:8000/docs`
-- ReDoc at `http://localhost:8000/redoc`
-- cURL, Postman, or any HTTP client
+`POST /record/highlights/{campaign_id}`
+- Generates AI highlights from transcript and Whisper segments.
 
-Example cURL command:
-```bash
-curl -X POST "http://localhost:8000/campaign/create" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Collect testimonial for my pizza restaurant"}'
+`POST /record/edited-highlights/{campaign_id}`
+```json
+{
+  "highlights": [
+    {
+      "text": "Strong recommendation segment",
+      "start": 45.2,
+      "end": 57.1,
+      "reason": "Manual edit"
+    }
+  ]
+}
 ```
+
+`POST /record/logo/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `logo`
+- Allowed: `png`, `jpg`, `jpeg`, `webp`
+
+`POST /record/music/{campaign_id}`
+- Content type: `multipart/form-data`
+- Form field: `music`
+- Allowed: `mp3`, `wav`, `m4a`
+
+`POST /record/generate-reel/{campaign_id}`
+```json
+{
+  "aspect_ratio": "landscape",
+  "add_subtitles": true,
+  "add_background_music": false,
+  "bgm_volume": 0.2,
+  "ducking_strength": 0.35
+}
+```
+
+Aspect ratio values: `landscape`, `portrait`, `square`
+
+## Common Errors
+
+- `400`: Invalid input (unsupported media type, invalid highlight range, missing transcript)
+- `404`: Campaign or requested media file not found
+- `500`: AI/FFmpeg/MoviePy internal processing failure
+
+## Notes
+
+- Database file is `testimonials.db` (SQLite).
+- Uploads are stored under `uploads/`, logos under `logos/`, music under `music/`, and generated reels under `outputs/`.
+- CORS is configured for frontend dev server at `http://localhost:5173` and `http://127.0.0.1:5173`.
