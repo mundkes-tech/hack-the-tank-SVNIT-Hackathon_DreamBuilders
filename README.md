@@ -1,4 +1,4 @@
-# 🎬 DreamBuilders - AI-Powered Testimonial Video Platform
+# 🎬 AI-Powered Testimonial Video Platform
 
 > **Intelligent, Automated Video Testimonial Collection & Professional Reel Generation**
 
